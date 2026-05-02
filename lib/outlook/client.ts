@@ -6,12 +6,14 @@ const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const TOKEN_URL  = (tenantId: string) =>
   `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
 
+// Fields fetched for every email in a list view
+const EMAIL_LIST_SELECT =
+  'id,subject,from,toRecipients,receivedDateTime,hasAttachments,isRead,bodyPreview,importance,isDraft';
+
 async function getOutlookConfig() {
-  // 1. Try Firestore (set via Settings page in the app)
   const stored = await getOutlookSettings();
   if (stored) return stored;
 
-  // 2. Fall back to environment variables
   const clientId     = process.env.OUTLOOK_CLIENT_ID     || '';
   const tenantId     = process.env.OUTLOOK_TENANT_ID     || '';
   const clientSecret = process.env.OUTLOOK_CLIENT_SECRET || '';
@@ -26,6 +28,7 @@ async function getOutlookConfig() {
   );
 }
 
+// ── Token cache ───────────────────────────────────────────────
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
 export async function getAccessToken(): Promise<string> {
@@ -65,6 +68,7 @@ export function invalidateOutlookTokenCache() {
   cachedToken = null;
 }
 
+// ── Error handler ─────────────────────────────────────────────
 function handleGraphError(err: unknown, inboxEmail: string): never {
   if (axios.isAxiosError(err)) {
     const status = err.response?.status;
@@ -79,22 +83,98 @@ function handleGraphError(err: unknown, inboxEmail: string): never {
   throw err;
 }
 
-export async function fetchAllEmails(maxEmails = 50): Promise<OutlookEmail[]> {
+// ── Paginated single-page fetch ───────────────────────────────
+// cursor = the full @odata.nextLink URL returned by the previous call.
+// Returns the page of emails, the next cursor (null = no more pages),
+// and the total email count (only present on the first page).
+export async function fetchEmailsPage(
+  cursor: string | null = null,
+  limit = 50,
+): Promise<{ emails: OutlookEmail[]; nextCursor: string | null; total: number | null }> {
   const { inboxEmail } = await getOutlookConfig();
   const token = await getAccessToken();
+
   try {
-    const res = await axios.get(`${GRAPH_BASE}/users/${inboxEmail}/messages`, {
-      headers: { Authorization: `Bearer ${token}` },
-      params: {
-        $top:     maxEmails,
+    // When cursor is present it IS the full next-link URL — use it as-is.
+    // On first page build the URL with all query params + $count.
+    const url = cursor ?? `${GRAPH_BASE}/users/${encodeURIComponent(inboxEmail)}/messages`;
+
+    const res = await axios.get<{
+      value: OutlookEmail[];
+      '@odata.nextLink'?: string;
+      '@odata.count'?: number;
+    }>(url, {
+      headers: {
+        Authorization:    `Bearer ${token}`,
+        ConsistencyLevel: 'eventual', // required for $count
+      },
+      // Only pass params on the first request; nextLink already has them
+      params: cursor ? undefined : {
+        $top:     Math.min(limit, 999),
         $orderby: 'receivedDateTime desc',
-        $select:  'id,subject,from,toRecipients,receivedDateTime,hasAttachments,isRead,bodyPreview,importance,isDraft',
+        $select:  EMAIL_LIST_SELECT,
+        $count:   'true',
       },
     });
-    return (res.data.value || []) as OutlookEmail[];
-  } catch (err) { handleGraphError(err, inboxEmail); }
+
+    return {
+      emails:     res.data.value ?? [],
+      nextCursor: res.data['@odata.nextLink'] ?? null,
+      total:      res.data['@odata.count']    ?? null,
+    };
+  } catch (err) {
+    handleGraphError(err, inboxEmail);
+  }
 }
 
+// ── Fetch ALL emails (follows every nextLink page) ────────────
+// Hard ceiling of 5 000 to prevent runaway loops on huge mailboxes.
+export async function fetchAllEmails(maxEmails = 5000): Promise<OutlookEmail[]> {
+  const all: OutlookEmail[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const { emails, nextCursor } = await fetchEmailsPage(cursor, 999);
+    all.push(...emails);
+    cursor = nextCursor;
+  } while (cursor && all.length < maxEmails);
+
+  return all.slice(0, maxEmails);
+}
+
+// ── Fetch emails with attachments (follows nextLinks) ─────────
+export async function fetchEmailsWithAttachments(maxEmails = 5000): Promise<OutlookEmail[]> {
+  const { inboxEmail } = await getOutlookConfig();
+  const token = await getAccessToken();
+
+  const all: OutlookEmail[] = [];
+  let url: string | null =
+    `${GRAPH_BASE}/users/${encodeURIComponent(inboxEmail)}/messages`;
+  let isFirst = true;
+
+  try {
+    while (url && all.length < maxEmails) {
+      type PageShape = { value: OutlookEmail[]; '@odata.nextLink'?: string };
+      const page: { data: PageShape } = await axios.get<PageShape>(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: isFirst ? {
+          $filter:  'hasAttachments eq true',
+          $top:     999,
+          $orderby: 'receivedDateTime desc',
+          $select:  'id,subject,from,receivedDateTime,hasAttachments,isRead,bodyPreview',
+        } : undefined,
+      });
+      all.push(...(page.data.value ?? []));
+      url     = page.data['@odata.nextLink'] ?? null;
+      isFirst = false;
+    }
+    return all.slice(0, maxEmails);
+  } catch (err) {
+    handleGraphError(err, inboxEmail);
+  }
+}
+
+// ── Single email detail ───────────────────────────────────────
 export async function fetchEmailById(
   emailId: string,
 ): Promise<OutlookEmail & { body: { content: string; contentType: string } }> {
@@ -103,38 +183,26 @@ export async function fetchEmailById(
   const encodedId = encodeURIComponent(emailId);
   try {
     const res = await axios.get(
-      `${GRAPH_BASE}/users/${inboxEmail}/messages/${encodedId}`,
+      `${GRAPH_BASE}/users/${encodeURIComponent(inboxEmail)}/messages/${encodedId}`,
       {
         headers: { Authorization: `Bearer ${token}` },
-        params:  { $select: 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,isRead,bodyPreview,body,importance' },
+        params:  {
+          $select: 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,isRead,bodyPreview,body,importance',
+        },
       },
     );
     return res.data;
   } catch (err) { handleGraphError(err, inboxEmail); }
 }
 
-export async function fetchEmailsWithAttachments(maxEmails = 50): Promise<OutlookEmail[]> {
-  const { inboxEmail } = await getOutlookConfig();
-  const token = await getAccessToken();
-  const res = await axios.get(`${GRAPH_BASE}/users/${inboxEmail}/messages`, {
-    headers: { Authorization: `Bearer ${token}` },
-    params: {
-      $filter:  'hasAttachments eq true',
-      $top:     maxEmails,
-      $orderby: 'receivedDateTime desc',
-      $select:  'id,subject,from,receivedDateTime,hasAttachments,isRead,bodyPreview',
-    },
-  });
-  return (res.data.value || []) as OutlookEmail[];
-}
-
+// ── Attachments ───────────────────────────────────────────────
 export async function fetchEmailAttachments(emailId: string): Promise<EmailAttachment[]> {
   const { inboxEmail } = await getOutlookConfig();
   const token = await getAccessToken();
   const encodedId = encodeURIComponent(emailId);
   try {
     const res = await axios.get(
-      `${GRAPH_BASE}/users/${inboxEmail}/messages/${encodedId}/attachments`,
+      `${GRAPH_BASE}/users/${encodeURIComponent(inboxEmail)}/messages/${encodedId}/attachments`,
       { headers: { Authorization: `Bearer ${token}` }, params: { $select: 'id,name,contentType,size' } },
     );
     return (res.data.value || []) as EmailAttachment[];
@@ -148,7 +216,7 @@ export async function downloadAttachment(
   const token = await getAccessToken();
   const encodedId = encodeURIComponent(emailId);
   const res = await axios.get(
-    `${GRAPH_BASE}/users/${inboxEmail}/messages/${encodedId}/attachments/${attachmentId}`,
+    `${GRAPH_BASE}/users/${encodeURIComponent(inboxEmail)}/messages/${encodedId}/attachments/${attachmentId}`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   const att = res.data as EmailAttachment;
@@ -156,6 +224,7 @@ export async function downloadAttachment(
   return { buffer: Buffer.from(att.contentBytes, 'base64'), contentType: att.contentType, name: att.name };
 }
 
+// ── Health checks ─────────────────────────────────────────────
 export async function validateOutlookConnection(): Promise<{ ok: boolean; error?: string }> {
   try { await getAccessToken(); return { ok: true }; }
   catch (err) { return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' }; }

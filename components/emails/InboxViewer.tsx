@@ -7,7 +7,7 @@ import {
   Star, FileText, File, X, Mail, Inbox,
   AlertCircle, ArrowLeft, Calendar, User,
   Zap, ChevronLeft, ChevronRight, Eye,
-  Download, Clock, ImageIcon, FileCode,
+  Download, Clock, ImageIcon, FileCode, Loader2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -18,7 +18,7 @@ import type { OutlookEmail, EmailAttachment, ProcessEmailResult } from '@/types'
 
 const PAGE_SIZE = 20;
 
-// ─── Avatar helpers ───────────────────────────────────────────────────────────
+// ─── Avatar helpers ───────────────────────────────────────────
 const AVATAR_COLORS = [
   'from-violet-500 to-purple-600', 'from-blue-500 to-cyan-600',
   'from-emerald-500 to-teal-600',  'from-orange-500 to-amber-600',
@@ -29,7 +29,7 @@ const getAvatarColor = (name: string) => AVATAR_COLORS[name.charCodeAt(0) % AVAT
 const getInitials    = (name: string) =>
   name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '??';
 
-// ─── File type helpers ────────────────────────────────────────────────────────
+// ─── File type helpers ────────────────────────────────────────
 function fileIcon(contentType: string, isCVFile?: boolean) {
   if (isCVFile) return <FileText className="h-5 w-5 text-primary-500" />;
   if (contentType.startsWith('image/')) return <ImageIcon className="h-5 w-5 text-blue-400" />;
@@ -44,7 +44,7 @@ function canPreview(contentType: string) {
   );
 }
 
-// ─── Skeleton rows ────────────────────────────────────────────────────────────
+// ─── Skeleton rows ────────────────────────────────────────────
 function EmailRowSkeleton() {
   return (
     <div className="flex items-start gap-3 px-4 py-4 border-b border-slate-100">
@@ -61,7 +61,7 @@ function EmailRowSkeleton() {
   );
 }
 
-// ─── Email Row ────────────────────────────────────────────────────────────────
+// ─── Email Row ────────────────────────────────────────────────
 function EmailRow({ email, selected, onClick, index }: {
   email: OutlookEmail; selected: boolean; onClick: () => void; index: number;
 }) {
@@ -109,7 +109,7 @@ function EmailRow({ email, selected, onClick, index }: {
               <Paperclip className="h-2.5 w-2.5" /> Attachment
             </span>
           )}
-          {email.processed && (
+          {(email as OutlookEmail & { processed?: boolean }).processed && (
             <span className="flex items-center gap-0.5 text-[10px] font-medium text-emerald-600">
               <CheckCircle2 className="h-2.5 w-2.5" /> Processed
             </span>
@@ -125,7 +125,7 @@ function EmailRow({ email, selected, onClick, index }: {
   );
 }
 
-// ─── Attachment Preview Modal ─────────────────────────────────────────────────
+// ─── Attachment Preview Modal ─────────────────────────────────
 function AttachmentPreviewModal({ emailId, attachment, onClose }: {
   emailId: string;
   attachment: EmailAttachment & { isCVFile?: boolean };
@@ -142,9 +142,7 @@ function AttachmentPreviewModal({ emailId, attachment, onClose }: {
         const res = await apiClient.post<{ success: boolean; data: { base64: string; contentType: string; name: string } }>(
           '/api/emails/attachment', { emailId, attachmentId: attachment.id }
         );
-        if (!cancelled) {
-          setDataUrl(`data:${res.data.contentType};base64,${res.data.base64}`);
-        }
+        if (!cancelled) setDataUrl(`data:${res.data.contentType};base64,${res.data.base64}`);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load attachment');
       } finally {
@@ -180,7 +178,6 @@ function AttachmentPreviewModal({ emailId, attachment, onClose }: {
           className="relative flex flex-col bg-white rounded-2xl shadow-2xl overflow-hidden"
           style={{ width: '90vw', maxWidth: 860, height: '88vh' }}
         >
-          {/* Modal header */}
           <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5 shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
               {fileIcon(attachment.contentType, attachment.isCVFile)}
@@ -194,10 +191,7 @@ function AttachmentPreviewModal({ emailId, attachment, onClose }: {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {dataUrl && (
-                <button
-                  onClick={handleDownload}
-                  className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 transition-colors"
-                >
+                <button onClick={handleDownload} className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 transition-colors">
                   <Download className="h-3.5 w-3.5" /> Download
                 </button>
               )}
@@ -207,7 +201,6 @@ function AttachmentPreviewModal({ emailId, attachment, onClose }: {
             </div>
           </div>
 
-          {/* Preview area */}
           <div className="flex-1 overflow-hidden flex items-center justify-center bg-slate-50">
             {loading ? (
               <div className="flex flex-col items-center gap-3 text-slate-400">
@@ -251,7 +244,7 @@ function AttachmentPreviewModal({ emailId, attachment, onClose }: {
   );
 }
 
-// ─── Attachment Card ──────────────────────────────────────────────────────────
+// ─── Attachment Card ──────────────────────────────────────────
 function AttachmentCard({ emailId, attachment }: {
   emailId: string;
   attachment: EmailAttachment & { isCVFile?: boolean };
@@ -294,17 +287,13 @@ function AttachmentCard({ emailId, attachment }: {
       </div>
 
       {previewing && (
-        <AttachmentPreviewModal
-          emailId={emailId}
-          attachment={attachment}
-          onClose={() => setPreviewing(false)}
-        />
+        <AttachmentPreviewModal emailId={emailId} attachment={attachment} onClose={() => setPreviewing(false)} />
       )}
     </>
   );
 }
 
-// ─── Email Detail view ────────────────────────────────────────────────────────
+// ─── Email Detail ─────────────────────────────────────────────
 function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
   email: OutlookEmail;
   onClose: () => void;
@@ -313,9 +302,10 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
   isMobile: boolean;
 }) {
   const iframeRef  = useRef<HTMLIFrameElement>(null);
+  const em         = email as OutlookEmail & { processed?: boolean; processedRecord?: { processedAt: string; attachmentName?: string } | null };
   const senderName = email.from?.emailAddress?.name || 'Unknown';
   const senderAddr = email.from?.emailAddress?.address || '';
-  const cvFiles    = email.attachments?.filter(a => a.isCVFile) ?? [];
+  const cvFiles    = email.attachments?.filter(a => (a as EmailAttachment & { isCVFile?: boolean }).isCVFile) ?? [];
   const allAttach  = email.attachments ?? [];
 
   useEffect(() => {
@@ -327,20 +317,13 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
     const isHtml = email.body?.contentType === 'html';
     const raw    = email.body?.content ?? '';
 
-    // For plain text: escape HTML entities, then linkify URLs
     const plainTextToHtml = (text: string) => {
-      const escaped = text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-      const linked = escaped.replace(
-        /(https?:\/\/[^\s<>"']+)/g,
-        '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
-      );
+      const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const linked  = escaped.replace(/(https?:\/\/[^\s<>"']+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
       return `<div class="plain-text">${linked}</div>`;
     };
 
-    const body    = raw ? (isHtml ? raw : plainTextToHtml(raw)) : '';
+    const body     = raw ? (isHtml ? raw : plainTextToHtml(raw)) : '';
     const fallback = `<p class="no-content">No message content available.</p>`;
 
     doc.open();
@@ -350,206 +333,39 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  /* ── Reset ── */
   *, *::before, *::after { box-sizing: border-box; }
   html { overflow-x: hidden; scroll-behavior: smooth; }
-
-  /* ── Base ── */
-  body {
-    margin: 0;
-    padding: 28px 36px 40px;
-    background: #ffffff;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-                 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
-    font-size: 14px;
-    line-height: 1.8;
-    color: #374151;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  /* ── Links ── */
-  a {
-    color: #4f46e5;
-    text-decoration: none;
-    word-break: break-all;
-  }
-  a:hover { text-decoration: underline; }
-
-  /* ── Headings ── */
-  h1, h2, h3, h4, h5, h6 {
-    color: #111827;
-    font-weight: 700;
-    line-height: 1.3;
-    margin: 20px 0 8px;
-  }
-  h1 { font-size: 20px; }
-  h2 { font-size: 17px; }
-  h3 { font-size: 15px; }
-  h4, h5, h6 { font-size: 14px; }
-
-  /* ── Paragraphs & spacing ── */
-  p { margin: 0 0 12px; }
-  p:last-child { margin-bottom: 0; }
-  br + br { display: block; content: ''; margin-top: 6px; }
-
-  /* ── Lists ── */
-  ul, ol { padding-left: 22px; margin: 8px 0 12px; }
-  li { margin-bottom: 5px; line-height: 1.6; }
-  li p { margin: 0; }
-
-  /* ── Images ── */
-  img {
-    max-width: 100% !important;
-    height: auto !important;
-    display: inline-block;
-    border-radius: 6px;
-    vertical-align: middle;
-  }
-
-  /* ── Tables — Outlook uses tables for layout ── */
-  table {
-    border-collapse: collapse;
-    max-width: 100% !important;
-    width: auto !important;
-  }
-  /* Layout tables (no border) — let them flow naturally */
-  table[border="0"], table[cellpadding="0"] {
-    border: none;
-  }
-  /* Data tables */
-  table[border]:not([border="0"]) td,
-  table[border]:not([border="0"]) th {
-    border: 1px solid #e5e7eb;
-    padding: 8px 12px;
-    font-size: 13px;
-    vertical-align: top;
-  }
-  table[border]:not([border="0"]) th {
-    background: #f9fafb;
-    font-weight: 600;
-    color: #111827;
-  }
-  td, th { vertical-align: top; }
-
-  /* ── Dividers ── */
-  hr {
-    border: none;
-    border-top: 1px solid #e5e7eb;
-    margin: 20px 0;
-  }
-
-  /* ── Code ── */
-  pre {
-    background: #f8fafc;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 14px 18px;
-    font-size: 12.5px;
-    font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', monospace;
-    overflow-x: auto;
-    white-space: pre;
-    line-height: 1.6;
-    margin: 12px 0;
-    color: #1e293b;
-  }
-  code {
-    background: #f1f5f9;
-    border-radius: 4px;
-    padding: 1px 5px;
-    font-size: 12.5px;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    color: #e11d48;
-  }
-  pre code { background: none; padding: 0; color: inherit; }
-
-  /* ── Blockquotes ── */
-  blockquote {
-    margin: 14px 0;
-    padding: 10px 16px;
-    border-left: 3px solid #c7d2fe;
-    background: #f5f3ff;
-    border-radius: 0 8px 8px 0;
-    color: #4b5563;
-    font-size: 13.5px;
-  }
-  blockquote p:last-child { margin-bottom: 0; }
-
-  /* ── Gmail / Outlook quoted replies ── */
-  .gmail_quote,
-  .gmail_attr,
-  [class*="gmail_quote"],
-  div[style*="border-left:1px solid"],
-  div[style*="border-left: 1px solid"] {
-    color: #6b7280 !important;
-    font-size: 13px !important;
-    margin-top: 18px;
-    padding-top: 14px;
-    border-top: 1px solid #e5e7eb;
-  }
-  /* Outlook reply separator */
-  div[style*="border-top:solid #E1E1E1"],
-  div[style*="border-top: solid #E1E1E1"],
-  div[style*="border-top:solid #e1e1e1"] {
-    margin-top: 20px !important;
-    padding-top: 16px !important;
-    opacity: 0.75;
-    font-size: 13px;
-    color: #6b7280;
-  }
-
-  /* ── Plain text emails ── */
-  .plain-text {
-    font-family: inherit;
-    white-space: pre-wrap;
-    font-size: 14px;
-    line-height: 1.8;
-    color: #374151;
-  }
-
-  /* ── Outlook-specific resets ── */
-  /* Prevent MSO-specific elements from breaking layout */
-  [class*="MsoNormal"], [class*="MsoBodyText"] {
-    margin: 0 0 8px !important;
-    font-family: inherit !important;
-    font-size: 14px !important;
-    color: #374151 !important;
-    line-height: 1.8 !important;
-  }
-  /* Outlook often uses font tags */
-  font { line-height: inherit; }
-  /* Contain wide Outlook layouts */
-  div[style*="width:600px"], div[style*="width: 600px"],
-  div[style*="width:700px"], div[style*="width: 700px"],
-  div[style*="width:800px"], div[style*="width: 800px"] {
-    width: 100% !important;
-    max-width: 100% !important;
-  }
-
-  /* ── Signature block styling ── */
-  .signature, [class*="signature"], #signature {
-    margin-top: 20px;
-    padding-top: 16px;
-    border-top: 1px solid #e5e7eb;
-    color: #6b7280;
-    font-size: 12.5px;
-    line-height: 1.6;
-  }
-
-  /* ── Empty / fallback ── */
-  .no-content {
-    color: #9ca3af;
-    font-style: italic;
-    text-align: center;
-    padding: 40px 0;
-  }
-
-  /* ── Scrollbar (webkit) ── */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 999px; }
-  ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+  body { margin:0; padding:28px 36px 40px; background:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif; font-size:14px; line-height:1.8; color:#374151; word-break:break-word; overflow-wrap:anywhere; -webkit-font-smoothing:antialiased; }
+  a { color:#4f46e5; text-decoration:none; word-break:break-all; }
+  a:hover { text-decoration:underline; }
+  h1,h2,h3,h4,h5,h6 { color:#111827; font-weight:700; line-height:1.3; margin:20px 0 8px; }
+  h1{font-size:20px;}h2{font-size:17px;}h3{font-size:15px;}h4,h5,h6{font-size:14px;}
+  p { margin:0 0 12px; } p:last-child { margin-bottom:0; }
+  ul,ol { padding-left:22px; margin:8px 0 12px; } li { margin-bottom:5px; line-height:1.6; }
+  img { max-width:100%!important; height:auto!important; display:inline-block; border-radius:6px; vertical-align:middle; }
+  table { border-collapse:collapse; max-width:100%!important; width:auto!important; }
+  table[border="0"],table[cellpadding="0"] { border:none; }
+  table[border]:not([border="0"]) td, table[border]:not([border="0"]) th { border:1px solid #e5e7eb; padding:8px 12px; font-size:13px; vertical-align:top; }
+  table[border]:not([border="0"]) th { background:#f9fafb; font-weight:600; color:#111827; }
+  td,th { vertical-align:top; }
+  hr { border:none; border-top:1px solid #e5e7eb; margin:20px 0; }
+  pre { background:#f8fafc; border:1px solid #e5e7eb; border-radius:8px; padding:14px 18px; font-size:12.5px; font-family:'SF Mono','Fira Code',monospace; overflow-x:auto; white-space:pre; line-height:1.6; margin:12px 0; color:#1e293b; }
+  code { background:#f1f5f9; border-radius:4px; padding:1px 5px; font-size:12.5px; font-family:'SF Mono','Fira Code',monospace; color:#e11d48; }
+  pre code { background:none; padding:0; color:inherit; }
+  blockquote { margin:14px 0; padding:10px 16px; border-left:3px solid #c7d2fe; background:#f5f3ff; border-radius:0 8px 8px 0; color:#4b5563; font-size:13.5px; }
+  blockquote p:last-child { margin-bottom:0; }
+  .gmail_quote,[class*="gmail_quote"],div[style*="border-left:1px solid"],div[style*="border-left: 1px solid"] { color:#6b7280!important; font-size:13px!important; margin-top:18px; padding-top:14px; border-top:1px solid #e5e7eb; }
+  div[style*="border-top:solid #E1E1E1"],div[style*="border-top: solid #E1E1E1"],div[style*="border-top:solid #e1e1e1"] { margin-top:20px!important; padding-top:16px!important; opacity:0.75; font-size:13px; color:#6b7280; }
+  .plain-text { font-family:inherit; white-space:pre-wrap; font-size:14px; line-height:1.8; color:#374151; }
+  [class*="MsoNormal"],[class*="MsoBodyText"] { margin:0 0 8px!important; font-family:inherit!important; font-size:14px!important; color:#374151!important; line-height:1.8!important; }
+  font { line-height:inherit; }
+  div[style*="width:600px"],div[style*="width: 600px"],div[style*="width:700px"],div[style*="width: 700px"],div[style*="width:800px"],div[style*="width: 800px"] { width:100%!important; max-width:100%!important; }
+  .signature,[class*="signature"],#signature { margin-top:20px; padding-top:16px; border-top:1px solid #e5e7eb; color:#6b7280; font-size:12.5px; line-height:1.6; }
+  .no-content { color:#9ca3af; font-style:italic; text-align:center; padding:40px 0; }
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:#e2e8f0; border-radius:999px; }
+  ::-webkit-scrollbar-thumb:hover { background:#cbd5e1; }
 </style>
 </head>
 <body>${body || fallback}</body>
@@ -565,7 +381,7 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
       transition={{ duration: 0.2, ease: 'easeOut' }}
       className="flex h-full flex-col bg-white"
     >
-      {/* ── Top bar ── */}
+      {/* Top bar */}
       <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-4 shrink-0">
         <div className="flex items-start gap-3 min-w-0 flex-1">
           {isMobile && (
@@ -583,7 +399,7 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {email.processed ? (
+          {em.processed ? (
             <Badge variant="success"><CheckCircle2 className="h-3 w-3 mr-1" />Processed</Badge>
           ) : cvFiles.length > 0 ? (
             <Button size="sm" onClick={() => onProcess(email.id)} loading={processing} icon={<Zap className="h-3.5 w-3.5" />}>
@@ -598,14 +414,10 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
         </div>
       </div>
 
-      {/* ── Sender meta ── */}
+      {/* Sender meta */}
       <div className="border-b border-slate-100 px-6 py-3 bg-slate-50/60 shrink-0">
         <div className="flex items-center gap-3">
-          <div className={cn(
-            'flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
-            'bg-gradient-to-br text-white text-xs font-bold shadow-sm',
-            getAvatarColor(senderName)
-          )}>
+          <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-white text-xs font-bold shadow-sm', getAvatarColor(senderName))}>
             {getInitials(senderName)}
           </div>
           <div className="flex-1 min-w-0">
@@ -627,7 +439,7 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
         </div>
       </div>
 
-      {/* ── Attachments strip ── */}
+      {/* Attachments */}
       {allAttach.length > 0 && (
         <div className="border-b border-slate-100 px-6 py-3 shrink-0">
           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
@@ -635,30 +447,25 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
           </p>
           <div className="flex flex-wrap gap-2">
             {allAttach.map(att => (
-              <AttachmentCard key={att.id} emailId={email.id} attachment={att} />
+              <AttachmentCard key={att.id} emailId={email.id} attachment={att as EmailAttachment & { isCVFile?: boolean }} />
             ))}
           </div>
         </div>
       )}
 
-      {/* ── Body ── */}
+      {/* Body */}
       <div className="flex-1 overflow-hidden bg-white">
-        <iframe
-          ref={iframeRef}
-          sandbox="allow-same-origin"
-          className="h-full w-full border-0"
-          title="Email body"
-        />
+        <iframe ref={iframeRef} sandbox="allow-same-origin" className="h-full w-full border-0" title="Email body" />
       </div>
 
-      {/* ── Processed banner ── */}
-      {email.processed && email.processedRecord && (
+      {/* Processed banner */}
+      {em.processed && em.processedRecord && (
         <div className="border-t border-emerald-100 bg-emerald-50 px-6 py-2.5 shrink-0">
           <p className="text-xs text-emerald-700 flex items-center gap-1.5">
             <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-            CV processed on {formatDateTime(email.processedRecord.processedAt)}
-            {email.processedRecord.attachmentName && (
-              <span className="text-emerald-500"> · {email.processedRecord.attachmentName}</span>
+            CV processed on {formatDateTime(em.processedRecord.processedAt)}
+            {em.processedRecord.attachmentName && (
+              <span className="text-emerald-500"> · {em.processedRecord.attachmentName}</span>
             )}
           </p>
         </div>
@@ -667,7 +474,7 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
   );
 }
 
-// ─── Detail loading skeleton ──────────────────────────────────────────────────
+// ─── Detail loading skeleton ──────────────────────────────────
 function DetailSkeleton() {
   return (
     <div className="flex h-full flex-col">
@@ -691,7 +498,7 @@ function DetailSkeleton() {
   );
 }
 
-// ─── Pagination ───────────────────────────────────────────────────────────────
+// ─── Pagination ───────────────────────────────────────────────
 function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (p: number) => void }) {
   if (totalPages <= 1) return null;
 
@@ -708,11 +515,7 @@ function Pagination({ page, totalPages, onChange }: { page: number; totalPages: 
 
   return (
     <div className="flex items-center justify-center gap-1 border-t border-slate-100 px-4 py-2.5 bg-white">
-      <button
-        onClick={() => onChange(page - 1)}
-        disabled={page === 1}
-        className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onClick={() => onChange(page - 1)} disabled={page === 1} className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
         <ChevronLeft className="h-3.5 w-3.5" /> Prev
       </button>
       <div className="flex items-center gap-0.5">
@@ -720,38 +523,37 @@ function Pagination({ page, totalPages, onChange }: { page: number; totalPages: 
           p === '...' ? (
             <span key={`dots-${i}`} className="px-2 py-1 text-xs text-slate-400">…</span>
           ) : (
-            <button
-              key={p}
-              onClick={() => onChange(p as number)}
-              className={cn(
-                'h-7 w-7 rounded-lg text-xs font-semibold transition-all',
-                page === p
-                  ? 'bg-primary-600 text-white shadow-sm'
-                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-              )}
-            >
+            <button key={p} onClick={() => onChange(p as number)} className={cn('h-7 w-7 rounded-lg text-xs font-semibold transition-all', page === p ? 'bg-primary-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800')}>
               {p}
             </button>
           )
         )}
       </div>
-      <button
-        onClick={() => onChange(page + 1)}
-        disabled={page === totalPages}
-        className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onClick={() => onChange(page + 1)} disabled={page === totalPages} className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
         Next <ChevronRight className="h-3.5 w-3.5" />
       </button>
     </div>
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── API response shape ───────────────────────────────────────
+interface InboxResponse {
+  success:    boolean;
+  data:       OutlookEmail[];
+  nextCursor: string | null;
+  total:      number | null;
+  count:      number;
+}
+
+// ─── Main InboxViewer ─────────────────────────────────────────
 export function InboxViewer() {
   const [emails, setEmails]               = useState<OutlookEmail[]>([]);
+  const [nextCursor, setNextCursor]       = useState<string | null>(null);
+  const [totalCount, setTotalCount]       = useState<number | null>(null);
   const [selectedId, setSelectedId]       = useState<string | null>(null);
   const [detailEmail, setDetailEmail]     = useState<OutlookEmail | null>(null);
   const [loadingList, setLoadingList]     = useState(true);
+  const [loadingMore, setLoadingMore]     = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [processing, setProcessing]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
@@ -760,14 +562,16 @@ export function InboxViewer() {
   const [error, setError]                 = useState<string | null>(null);
   const [showDetail, setShowDetail]       = useState(false);
 
-  // ── Fetch list ──────────────────────────────────────────────────────────────
+  // ── Initial / refresh load ────────────────────────────────────
   const fetchEmails = useCallback(async (silent = false) => {
     if (!silent) setLoadingList(true);
-    else setRefreshing(true);
+    else         setRefreshing(true);
     setError(null);
     try {
-      const res = await apiClient.get<{ success: boolean; data: OutlookEmail[] }>('/api/emails/inbox');
+      const res = await apiClient.get<InboxResponse>('/api/emails/inbox?limit=50');
       setEmails(res.data);
+      setNextCursor(res.nextCursor ?? null);
+      if (res.total != null) setTotalCount(res.total);
       setPage(1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load emails');
@@ -777,7 +581,58 @@ export function InboxViewer() {
     }
   }, []);
 
-  // ── Fetch detail ────────────────────────────────────────────────────────────
+  // ── Load next page (append) ───────────────────────────────────
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await apiClient.get<InboxResponse>(
+        `/api/emails/inbox?cursor=${encodeURIComponent(nextCursor)}&limit=50`
+      );
+      setEmails(prev => {
+        // Deduplicate by id in case of overlap
+        const existingIds = new Set(prev.map(e => e.id));
+        const fresh = res.data.filter(e => !existingIds.has(e.id));
+        return [...prev, ...fresh];
+      });
+      setNextCursor(res.nextCursor ?? null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load more emails');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor, loadingMore]);
+
+  // ── Load ALL remaining pages ──────────────────────────────────
+  const loadAll = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      let cursor: string | null = nextCursor;
+      const accumulated: OutlookEmail[] = [];
+
+      while (cursor) {
+        const page: InboxResponse = await apiClient.get<InboxResponse>(
+          `/api/emails/inbox?cursor=${encodeURIComponent(cursor)}&limit=999`
+        );
+        accumulated.push(...page.data);
+        cursor = page.nextCursor ?? null;
+      }
+
+      setEmails(prev => {
+        const existingIds = new Set(prev.map(e => e.id));
+        const fresh = accumulated.filter(e => !existingIds.has(e.id));
+        return [...prev, ...fresh];
+      });
+      setNextCursor(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load all emails');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor, loadingMore]);
+
+  // ── Fetch single email detail ─────────────────────────────────
   const fetchDetail = useCallback(async (id: string) => {
     setLoadingDetail(true);
     try {
@@ -798,7 +653,7 @@ export function InboxViewer() {
     setEmails(prev => prev.map(e => e.id === email.id ? { ...e, isRead: true } : e));
   }, [fetchDetail]);
 
-  // ── Process CV ──────────────────────────────────────────────────────────────
+  // ── Process CV ────────────────────────────────────────────────
   const handleProcess = useCallback(async (emailId: string) => {
     setProcessing(true);
     try {
@@ -822,11 +677,9 @@ export function InboxViewer() {
   }, []);
 
   useEffect(() => { fetchEmails(); }, [fetchEmails]);
-
-  // Reset page on search change
   useEffect(() => { setPage(1); }, [search]);
 
-  // ── Filter + search + paginate ──────────────────────────────────────────────
+  // ── Filter + search + paginate (client-side on loaded emails) ─
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return emails;
@@ -844,7 +697,9 @@ export function InboxViewer() {
     return filtered.slice(start, start + PAGE_SIZE);
   }, [filtered, page]);
 
-  const unreadCount = useMemo(() => emails.filter(e => !e.isRead).length, [emails]);
+  const unreadCount   = useMemo(() => emails.filter(e => !e.isRead).length, [emails]);
+  const loadedCount   = emails.length;
+  const hasMore       = !!nextCursor;
 
   return (
     <div className="flex h-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -887,23 +742,33 @@ export function InboxViewer() {
               className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-8 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:bg-white transition-all"
             />
             {search && (
-              <button
-                onClick={() => setSearch('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
+              <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                 <X className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
 
-          {/* Result count */}
+          {/* Count row */}
           {!loadingList && (
-            <p className="text-[11px] text-slate-400">
-              {search
-                ? `${filtered.length} result${filtered.length !== 1 ? 's' : ''} for "${search}"`
-                : `${emails.length} emails`
-              }
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-slate-400">
+                {search
+                  ? `${filtered.length} result${filtered.length !== 1 ? 's' : ''} for "${search}"`
+                  : totalCount != null
+                    ? `${loadedCount} of ${totalCount} emails loaded`
+                    : `${loadedCount} emails loaded`
+                }
+              </p>
+              {hasMore && !search && (
+                <button
+                  onClick={loadAll}
+                  disabled={loadingMore}
+                  className="text-[11px] font-medium text-primary-600 hover:text-primary-800 transition-colors disabled:opacity-50"
+                >
+                  {loadingMore ? 'Loading…' : 'Load all'}
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -916,9 +781,7 @@ export function InboxViewer() {
               <AlertCircle className="h-10 w-10 text-red-400" />
               <p className="text-sm font-medium text-slate-600">Connection error</p>
               <p className="text-xs text-slate-400 max-w-xs">{error}</p>
-              <button onClick={() => fetchEmails()} className="text-xs text-primary-600 hover:underline font-medium mt-1">
-                Try again
-              </button>
+              <button onClick={() => fetchEmails()} className="text-xs text-primary-600 hover:underline font-medium mt-1">Try again</button>
             </div>
           ) : currentPage.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 py-12">
@@ -928,27 +791,41 @@ export function InboxViewer() {
               }
             </div>
           ) : (
-            currentPage.map((email, i) => (
-              <EmailRow
-                key={email.id}
-                email={email}
-                selected={email.id === selectedId}
-                onClick={() => handleSelect(email)}
-                index={i}
-              />
-            ))
+            <>
+              {currentPage.map((email, i) => (
+                <EmailRow
+                  key={email.id}
+                  email={email}
+                  selected={email.id === selectedId}
+                  onClick={() => handleSelect(email)}
+                  index={i}
+                />
+              ))}
+
+              {/* Load-more footer (shown when on last page and more pages exist) */}
+              {page === totalPages && hasMore && !search && (
+                <div className="px-4 py-4 border-t border-slate-100 bg-slate-50/50">
+                  <button
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50"
+                  >
+                    {loadingMore
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading more…</>
+                      : <><Mail className="h-3.5 w-3.5" /> Load more emails{totalCount ? ` (${totalCount - loadedCount} remaining)` : ''}</>
+                    }
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        {/* Pagination */}
         <Pagination page={page} totalPages={totalPages} onChange={setPage} />
       </div>
 
       {/* ════ RIGHT — Email detail ════ */}
-      <div className={cn(
-        'flex-1 min-w-0 overflow-hidden',
-        showDetail ? 'flex flex-col' : 'hidden lg:flex lg:flex-col'
-      )}>
+      <div className={cn('flex-1 min-w-0 overflow-hidden', showDetail ? 'flex flex-col' : 'hidden lg:flex lg:flex-col')}>
         <AnimatePresence mode="wait">
           {loadingDetail ? (
             <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -964,30 +841,33 @@ export function InboxViewer() {
               isMobile={showDetail}
             />
           ) : (
-            <motion.div
-              key="empty"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex h-full flex-col items-center justify-center text-center px-8 gap-5"
-            >
+            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex h-full flex-col items-center justify-center text-center px-8 gap-5">
               <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-50 to-primary-100 shadow-inner">
                 <Mail className="h-9 w-9 text-primary-400" />
               </div>
               <div>
                 <p className="text-base font-bold text-slate-700">Select an email to read</p>
                 <p className="text-sm text-slate-400 mt-1">
-                  {unreadCount > 0
-                    ? `${unreadCount} unread email${unreadCount !== 1 ? 's' : ''} waiting`
-                    : `${emails.length} emails loaded`}
+                  {totalCount != null
+                    ? `${loadedCount} of ${totalCount} emails loaded`
+                    : unreadCount > 0
+                      ? `${unreadCount} unread email${unreadCount !== 1 ? 's' : ''} waiting`
+                      : `${loadedCount} emails loaded`
+                  }
                 </p>
               </div>
-              {emails.filter(e => !e.processed && e.hasAttachments).length > 0 && (
+              {emails.filter(e => !(e as OutlookEmail & { processed?: boolean }).processed && e.hasAttachments).length > 0 && (
                 <div className="flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-200 px-4 py-2.5 max-w-xs">
                   <Clock className="h-4 w-4 text-amber-600 shrink-0" />
                   <p className="text-xs text-amber-700 font-medium text-left">
-                    {emails.filter(e => !e.processed && e.hasAttachments).length} CV{emails.filter(e => !e.processed && e.hasAttachments).length !== 1 ? 's' : ''} pending processing
+                    {emails.filter(e => !(e as OutlookEmail & { processed?: boolean }).processed && e.hasAttachments).length} CV{emails.filter(e => !(e as OutlookEmail & { processed?: boolean }).processed && e.hasAttachments).length !== 1 ? 's' : ''} pending processing
                   </p>
                 </div>
+              )}
+              {hasMore && (
+                <button onClick={loadAll} disabled={loadingMore} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-all disabled:opacity-50">
+                  {loadingMore ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading…</> : <>Load all emails</>}
+                </button>
               )}
             </motion.div>
           )}
