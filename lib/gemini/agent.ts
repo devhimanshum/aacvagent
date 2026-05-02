@@ -16,10 +16,15 @@ function calcCost(inputTokens: number, outputTokens: number): number {
 }
 
 function getOpenAIConfig() {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const model  = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-  if (!apiKey || apiKey.includes('PASTE'))
-    throw new Error('OPENAI_API_KEY is not set in .env.local');
+  const apiKey = process.env.OPENAI_API_KEY || '';
+  const model  = process.env.OPENAI_MODEL   || 'gpt-4o-mini';
+
+  if (!apiKey || apiKey.includes('PASTE') || apiKey === 'undefined') {
+    throw new Error(
+      'OPENAI_API_KEY is not configured. ' +
+      'Go to Vercel → Project Settings → Environment Variables → add OPENAI_API_KEY, then redeploy.',
+    );
+  }
   return { apiKey, model };
 }
 
