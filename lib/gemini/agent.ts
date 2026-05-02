@@ -43,27 +43,49 @@ const MARITIME_RANKS = [
 ];
 
 function buildPrompt(cvText: string): string {
-  return `You are an expert maritime HR recruiter. Analyze the following seafarer CV/resume and extract all relevant information.
+  const today     = new Date();
+  const todayYear = today.getFullYear();
+  const todayMonth= today.getMonth() + 1; // 1-based
+  const todayLabel= today.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
-## Maritime Ranks Reference
+  return `You are an expert maritime HR recruiter with deep knowledge of seafarer CVs.
+Analyze the CV below and extract structured data with PRECISE duration calculations.
+
+TODAY'S DATE: ${todayLabel} (Year=${todayYear}, Month=${todayMonth})
+
+## Maritime Ranks Reference (use the closest match)
 ${MARITIME_RANKS.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 ## CV Content
-${cvText.substring(0, 10000)}
+${cvText.substring(0, 12000)}
 
-## Instructions
-1. Extract the candidate's personal details (name, email, phone).
-2. Extract every position/rank held from their sea service history:
-   - Match the rank to the closest rank from the reference list above (or keep original if no match).
-   - Extract vessel name, company name, start date, end date.
-   - Calculate duration in months (if "to" is "Present" or "Ongoing", calculate to today: ${new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}).
-   - Mark isPresentRole = true only for their current active position.
-3. Identify their current/most recent rank.
-4. Sum total sea service in months across all ranks.
-5. Extract education, certificates of competency (CoC), STCW endorsements.
-6. Write a concise 2-3 sentence professional summary.
+## CRITICAL INSTRUCTIONS — READ CAREFULLY
 
-Respond ONLY with a valid JSON object — no markdown, no explanation, just raw JSON:
+### Duration calculation rules (MUST follow exactly):
+- Parse "from" and "to" dates to determine the NUMBER OF COMPLETE MONTHS.
+- Formula: durationMonths = (toYear − fromYear) × 12 + (toMonth − fromMonth)
+  - If toMonth < fromMonth, borrow: durationMonths = (toYear − fromYear − 1) × 12 + (12 + toMonth − fromMonth)
+- If "to" is blank, "Present", "Till date", "Current", "Ongoing" → use today: Year=${todayYear}, Month=${todayMonth}
+- If only years are given (e.g. "2018–2021") → assume Jan of start year to Dec of end year
+- If a month+year is given (e.g. "June 2019") → use that month exactly
+- NEVER leave durationMonths as 0 if you can see dates. Minimum 1 if the candidate worked that role.
+- Mark isPresentRole = true ONLY for the ONE currently active role (where "to" = Present/Current)
+
+### Rank matching rules:
+- Always map the extracted rank to the CLOSEST entry in the Maritime Ranks Reference list.
+- If no close match exists, keep the original rank text.
+- Do NOT invent ranks not present in the CV.
+
+### totalSeaServiceMonths:
+- Set this to the SUM of ALL individual durationMonths values.
+- Double-check: if individual entries sum to X, totalSeaServiceMonths must equal X.
+
+### Other rules:
+- Extract ALL sea-service entries from the CV — do not skip any.
+- Education: include CoC grade, STCW certificates, flag state endorsements.
+- Summary: 2–3 sentences focusing on rank, experience, vessel types.
+
+Respond ONLY with a valid JSON object — no markdown, no code fences, no explanation:
 
 {
   "name": "Full Name",
@@ -79,22 +101,31 @@ Respond ONLY with a valid JSON object — no markdown, no explanation, just raw 
       "to": "Present",
       "durationMonths": 26,
       "isPresentRole": true
+    },
+    {
+      "rank": "Second Engineer",
+      "vessel": "MT Ocean Blue",
+      "company": "Blue Ocean Shipping",
+      "from": "January 2019",
+      "to": "February 2022",
+      "durationMonths": 37,
+      "isPresentRole": false
     }
   ],
-  "totalSeaServiceMonths": 120,
-  "education": "B.Sc Marine Engineering, CoC Class 1 MEO, STCW Basic Safety",
-  "summary": "Experienced Chief Engineer with over 10 years of deep-sea service."
+  "totalSeaServiceMonths": 63,
+  "education": "B.Sc Marine Engineering, CoC Class 1 MEO, STCW Basic Safety Training",
+  "summary": "Experienced Chief Engineer with 5+ years on tankers and bulk carriers."
 }`;
 }
 
 function safeRankEntry(r: Partial<RankEntry>): RankEntry {
   return {
-    rank:           String(r.rank || ''),
-    vessel:         String(r.vessel || ''),
-    company:        String(r.company || ''),
-    from:           String(r.from || ''),
-    to:             String(r.to || ''),
-    durationMonths: Number(r.durationMonths) || 0,
+    rank:           String(r.rank || '').trim(),
+    vessel:         String(r.vessel  || '').trim(),
+    company:        String(r.company || '').trim(),
+    from:           String(r.from    || '').trim(),
+    to:             String(r.to      || '').trim(),
+    durationMonths: Math.max(0, Number(r.durationMonths) || 0),
     isPresentRole:  Boolean(r.isPresentRole),
   };
 }
@@ -111,15 +142,22 @@ function parseResponse(raw: string): MaritimeAIResult {
     ? (parsed.rankHistory as Partial<RankEntry>[]).map(safeRankEntry).filter(r => r.rank)
     : [];
 
+  // Recalculate totalSeaServiceMonths as the sum of all individual entries.
+  // This overrides whatever the AI returned if the AI made an arithmetic mistake.
+  const summedMonths = rankHistory.reduce((acc, r) => acc + (r.durationMonths ?? 0), 0);
+  const aiTotal      = Number(parsed.totalSeaServiceMonths) || 0;
+  // Use the larger of the two (AI sometimes has a valid total when entries are partial)
+  const totalSeaServiceMonths = Math.max(summedMonths, aiTotal);
+
   return {
-    name:                  String(parsed.name || 'Unknown'),
-    email:                 String(parsed.email || ''),
-    phone:                 String(parsed.phone || ''),
-    currentRank:           String(parsed.currentRank || rankHistory[0]?.rank || ''),
+    name:                  String(parsed.name || 'Unknown').trim(),
+    email:                 String(parsed.email || '').trim().toLowerCase(),
+    phone:                 String(parsed.phone || '').trim(),
+    currentRank:           String(parsed.currentRank || rankHistory[0]?.rank || '').trim(),
     rankHistory,
-    totalSeaServiceMonths: Number(parsed.totalSeaServiceMonths) || 0,
-    education:             String(parsed.education || 'Not specified'),
-    summary:               String(parsed.summary || ''),
+    totalSeaServiceMonths,
+    education:             String(parsed.education || 'Not specified').trim(),
+    summary:               String(parsed.summary || '').trim(),
   };
 }
 

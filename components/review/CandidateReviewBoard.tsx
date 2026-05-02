@@ -10,18 +10,14 @@ import {
 } from 'lucide-react';
 import { CVPreviewButton } from '@/components/ui/CVPreviewButton';
 import { CandidateFilters, DEFAULT_FILTERS, applyFilters } from '@/components/candidates/CandidateFilters';
+import { aggregateRanks, monthsLabel } from '@/components/candidates/CandidateCard';
 import { apiClient } from '@/lib/utils/api-client';
 import { cn, formatDateTime } from '@/lib/utils/helpers';
 import toast from 'react-hot-toast';
 import type { FilterState } from '@/components/candidates/CandidateFilters';
-import type { Candidate, RankEntry } from '@/types';
+import type { Candidate, RankEntry, RankConfig, RankRequirement } from '@/types';
 
 // ── helpers ───────────────────────────────────────────────────
-function monthsToLabel(m: number) {
-  if (!m) return '—';
-  const y = Math.floor(m / 12), mo = m % 12;
-  return [y ? `${y} yr${y !== 1 ? 's' : ''}` : '', mo ? `${mo} mo` : ''].filter(Boolean).join(' ');
-}
 function getInitials(name: string) {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '??';
 }
@@ -32,7 +28,52 @@ const AVATAR_COLORS = [
 ];
 const getColor = (name: string) => AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
 
-// ── Rank timeline ─────────────────────────────────────────────
+// ── Rank experience summary (aggregated) ─────────────────────
+function RankExperienceSummary({ history, rankConfig }: { history: RankEntry[]; rankConfig: RankRequirement[] }) {
+  const agg = aggregateRanks(history);
+
+  // Sort by config order if available, else by totalMonths desc
+  const sorted = rankConfig.length > 0
+    ? agg.sort((a, b) => {
+        const oa = rankConfig.findIndex(r => r.rank.toLowerCase() === a.rank.toLowerCase());
+        const ob = rankConfig.findIndex(r => r.rank.toLowerCase() === b.rank.toLowerCase());
+        const orderA = oa >= 0 ? oa : 999;
+        const orderB = ob >= 0 ? ob : 999;
+        if (a.isPresentRole && !b.isPresentRole) return -1;
+        if (!a.isPresentRole && b.isPresentRole)  return  1;
+        if (orderA !== orderB) return orderA - orderB;
+        return b.totalMonths - a.totalMonths;
+      })
+    : agg;
+
+  const maxMonths = Math.max(...sorted.map(r => r.totalMonths), 1);
+
+  if (!sorted.length) return <p className="text-xs text-slate-400 italic">No rank history extracted</p>;
+
+  return (
+    <div className="space-y-2">
+      {sorted.map(r => (
+        <div key={r.rank} className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 w-36 shrink-0">
+            {r.isPresentRole && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
+            <span className={cn('text-xs truncate', r.isPresentRole ? 'font-bold text-emerald-800' : 'font-medium text-slate-700')}>
+              {r.rank}
+            </span>
+          </div>
+          <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className={cn('h-full rounded-full', r.isPresentRole ? 'bg-emerald-400' : 'bg-primary-400')}
+              style={{ width: `${Math.min(100, (r.totalMonths / maxMonths) * 100)}%` }}
+            />
+          </div>
+          <span className="text-[11px] text-slate-500 w-14 text-right shrink-0">{monthsLabel(r.totalMonths)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Raw rank history timeline ─────────────────────────────────
 function RankTimeline({ history }: { history: RankEntry[] }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? history : history.slice(0, 3);
@@ -40,43 +81,38 @@ function RankTimeline({ history }: { history: RankEntry[] }) {
   if (!history.length) return <p className="text-xs text-slate-400 italic">No rank history extracted</p>;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       {visible.map((entry, i) => (
         <div key={i} className={cn(
-          'flex items-start gap-3 rounded-xl px-3 py-2.5 border',
-          entry.isPresentRole ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50/50',
+          'flex items-start gap-3 rounded-xl px-3 py-2 border text-xs',
+          entry.isPresentRole ? 'border-emerald-200 bg-emerald-50' : 'border-slate-100 bg-slate-50/60',
         )}>
-          <div className="flex flex-col items-center shrink-0 pt-1">
-            <div className={cn('h-2.5 w-2.5 rounded-full', entry.isPresentRole ? 'bg-emerald-500' : 'bg-slate-300')} />
-            {i < visible.length - 1 && <div className="w-px flex-1 bg-slate-200 mt-1 min-h-4" />}
-          </div>
+          <div className={cn('mt-1 h-2 w-2 rounded-full shrink-0', entry.isPresentRole ? 'bg-emerald-500' : 'bg-slate-300')} />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={cn('text-sm font-bold', entry.isPresentRole ? 'text-emerald-800' : 'text-slate-800')}>
+              <span className={cn('font-bold', entry.isPresentRole ? 'text-emerald-800' : 'text-slate-800')}>
                 {entry.rank || 'Unknown Rank'}
               </span>
               {entry.isPresentRole && (
-                <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white">Current</span>
+                <span className="rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white">Current</span>
               )}
               {entry.durationMonths ? (
-                <span className="flex items-center gap-1 text-[11px] text-slate-500 ml-auto">
-                  <Clock className="h-3 w-3" />{monthsToLabel(entry.durationMonths)}
+                <span className="flex items-center gap-1 text-slate-400 ml-auto shrink-0">
+                  <Clock className="h-3 w-3" />{monthsLabel(entry.durationMonths)}
                 </span>
               ) : null}
             </div>
-            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-              {entry.vessel  && <span className="text-xs text-slate-500 flex items-center gap-1"><Anchor className="h-3 w-3 text-slate-400" />{entry.vessel}</span>}
-              {entry.company && <span className="text-xs text-slate-500">{entry.company}</span>}
-              {(entry.from || entry.to) && (
-                <span className="text-xs text-slate-400">{entry.from}{entry.from && entry.to ? ' → ' : ''}{entry.to}</span>
-              )}
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+              {entry.vessel  && <span className="flex items-center gap-1 text-slate-500"><Anchor className="h-3 w-3 text-slate-300" />{entry.vessel}</span>}
+              {entry.company && <span className="text-slate-400">{entry.company}</span>}
+              {(entry.from || entry.to) && <span className="text-slate-400">{entry.from}{entry.from && entry.to ? ' – ' : ''}{entry.to}</span>}
             </div>
           </div>
         </div>
       ))}
       {history.length > 3 && (
         <button onClick={() => setExpanded(e => !e)} className="flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 mt-1">
-          {expanded ? <><ChevronUp className="h-3.5 w-3.5" />Show less</> : <><ChevronDown className="h-3.5 w-3.5" />Show {history.length - 3} more positions</>}
+          {expanded ? <><ChevronUp className="h-3.5 w-3.5" />Show less</> : <><ChevronDown className="h-3.5 w-3.5" />Show {history.length - 3} more</>}
         </button>
       )}
     </div>
@@ -85,13 +121,14 @@ function RankTimeline({ history }: { history: RankEntry[] }) {
 
 // ── Candidate card ────────────────────────────────────────────
 function CandidateCard({
-  candidate, selected, onToggleSelect, onDecision, deciding,
+  candidate, selected, onToggleSelect, onDecision, deciding, rankConfig,
 }: {
   candidate: Candidate;
   selected: boolean;
   onToggleSelect: (id: string) => void;
   onDecision: (id: string, d: 'selected' | 'unselected', note?: string) => void;
   deciding: boolean;
+  rankConfig: RankRequirement[];
 }) {
   const [detailOpen,  setDetailOpen]  = useState(false);
   const [noteOpen,    setNoteOpen]    = useState(false);
@@ -200,7 +237,7 @@ function CandidateCard({
             {candidate.totalSeaServiceMonths > 0 && (
               <span className="flex items-center gap-1 text-xs font-medium text-slate-600">
                 <Clock className="h-3 w-3 text-slate-400" />
-                Sea service: <strong>{monthsToLabel(candidate.totalSeaServiceMonths)}</strong>
+                Sea service: <strong>{monthsLabel(candidate.totalSeaServiceMonths)}</strong>
               </span>
             )}
             <span className="text-xs text-slate-400">Processed {formatDateTime(candidate.processedAt)}</span>
@@ -223,7 +260,17 @@ function CandidateCard({
         </div>
       )}
 
-      {/* ── Rank history toggle ── */}
+      {/* ── Per-rank experience summary ── */}
+      {(candidate.rankHistory?.length ?? 0) > 0 && (
+        <div className="mx-5 mb-3 rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2.5 flex items-center gap-1.5">
+            <Anchor className="h-3 w-3" /> Experience by Rank
+          </p>
+          <RankExperienceSummary history={candidate.rankHistory ?? []} rankConfig={rankConfig} />
+        </div>
+      )}
+
+      {/* ── Raw rank history toggle ── */}
       <div className="border-t border-slate-100">
         <button
           onClick={() => setDetailOpen(o => !o)}
@@ -231,9 +278,9 @@ function CandidateCard({
         >
           <span className="flex items-center gap-2 text-xs font-bold text-slate-700">
             <ClipboardList className="h-3.5 w-3.5 text-slate-400" />
-            Rank History
+            Full History
             <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
-              {candidate.rankHistory?.length ?? 0}
+              {candidate.rankHistory?.length ?? 0} entries
             </span>
           </span>
           {detailOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
@@ -338,6 +385,7 @@ function CardSkeleton() {
 // ── Main board ────────────────────────────────────────────────
 export function CandidateReviewBoard() {
   const [candidates,   setCandidates]   = useState<Candidate[]>([]);
+  const [rankConfig,   setRankConfig]   = useState<RankRequirement[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [refreshing,   setRefreshing]   = useState(false);
   const [deciding,     setDeciding]     = useState<string | null>(null);
@@ -347,6 +395,16 @@ export function CandidateReviewBoard() {
   const [filters,      setFilters]      = useState<FilterState>(DEFAULT_FILTERS);
 
   const filtered = useMemo(() => applyFilters(candidates, filters), [candidates, filters]);
+
+  // Load rank config once (for ordered display)
+  useEffect(() => {
+    apiClient.get<{ success: boolean; data: RankConfig | null }>('/api/config')
+      .then(res => {
+        const reqs = res.data?.requirements ?? [];
+        setRankConfig(reqs.filter(r => r.enabled).sort((a, b) => a.order - b.order));
+      })
+      .catch(() => {/* use empty config — no ordering */});
+  }, []);
 
   const fetchCandidates = useCallback(async (silent = false) => {
     if (!silent) setLoading(true); else setRefreshing(true);
@@ -549,6 +607,7 @@ export function CandidateReviewBoard() {
                 onToggleSelect={toggleSelect}
                 onDecision={handleDecision}
                 deciding={deciding === c.id}
+                rankConfig={rankConfig}
               />
             ))}
           </div>
