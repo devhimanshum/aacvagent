@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Mail, BrainCircuit, CheckCircle, XCircle,
-  RefreshCw, Zap, Eye, EyeOff, Save, ChevronDown, ChevronUp,
+  RefreshCw, Zap, Eye, EyeOff, Save, ChevronDown, ChevronUp, Sheet, Send,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { TokenUsagePanel } from '@/components/settings/TokenUsagePanel';
+import { EmailTemplatesPanel } from '@/components/settings/EmailTemplatesPanel';
 import { apiClient } from '@/lib/utils/api-client';
 import { cn } from '@/lib/utils/helpers';
 import toast from 'react-hot-toast';
@@ -16,9 +17,10 @@ interface SettingsData {
   outlook: { configured: boolean; source: string; inboxEmail: string; clientId: string };
   openai:  { configured: boolean; source: string; model: string; keyHint: string };
   gemini?: { configured: boolean; model: string };
+  sheet?:  { configured: boolean; sheetUrl: string };
 }
 
-type Tab = 'connections' | 'usage';
+type Tab = 'connections' | 'usage' | 'templates';
 
 /* ── Small input component ── */
 function Field({
@@ -87,6 +89,16 @@ export function SettingsForm() {
   const [aiKey,        setAiKey]        = useState('');
   const [aiModel,      setAiModel]      = useState('gpt-4o-mini');
   const [savingOpenAI, setSavingOpenAI] = useState(false);
+
+  // Google Sheet form state
+  const [sheetOpen,    setSheetOpen]    = useState(false);
+  const [sheetUrl,     setSheetUrl]     = useState('');
+  const [savingSheet,  setSavingSheet]  = useState(false);
+  const [testingSheet, setTestingSheet] = useState(false);
+
+  // Test send state
+  const [testSendEmail,   setTestSendEmail]   = useState('');
+  const [testingSend,     setTestingSend]     = useState(false);
 
   const loadSettings = () => {
     setLoading(true);
@@ -163,8 +175,65 @@ export function SettingsForm() {
     }
   };
 
+  const saveSheet = async () => {
+    if (!sheetUrl.trim()) { toast.error('Please enter a Google Sheet URL'); return; }
+    setSavingSheet(true);
+    try {
+      const res = await apiClient.post<{ success: boolean; message: string }>(
+        '/api/settings',
+        { type: 'save_sheet', sheetUrl: sheetUrl.trim() },
+      );
+      if (res.success) {
+        toast.success(res.message);
+        setSheetOpen(false);
+        loadSettings();
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSavingSheet(false);
+    }
+  };
+
+  const testSheet = async () => {
+    const urlToTest = sheetUrl.trim() || data?.sheet?.sheetUrl || '';
+    if (!urlToTest) { toast.error('Enter the sheet URL first'); return; }
+    setTestingSheet(true);
+    try {
+      const res = await apiClient.post<{ success: boolean; message: string }>(
+        '/api/settings',
+        { type: 'test_sheet', sheetUrl: urlToTest },
+      );
+      if (res.success) toast.success(res.message);
+      else toast.error(res.message, { duration: 8000 });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Test failed');
+    } finally {
+      setTestingSheet(false);
+    }
+  };
+
+  const testSend = async () => {
+    if (!testSendEmail.trim()) { toast.error('Enter a recipient email address'); return; }
+    setTestingSend(true);
+    try {
+      const res = await apiClient.post<{ success: boolean; message: string }>(
+        '/api/settings', { type: 'test_send', toEmail: testSendEmail.trim() },
+      );
+      if (res.success) toast.success(res.message);
+      else toast.error(res.message, { duration: 10000 });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Test failed');
+    } finally {
+      setTestingSend(false);
+    }
+  };
+
   const outlookOk = data?.outlook.configured ?? false;
   const openaiOk  = (data?.openai ?? data?.gemini)?.configured ?? false;
+  const sheetOk   = data?.sheet?.configured ?? false;
 
   return (
     <div className="space-y-5">
@@ -173,6 +242,7 @@ export function SettingsForm() {
         {([
           { key: 'connections', label: 'Connections' },
           { key: 'usage', label: 'Token Usage', icon: <Zap className="h-3.5 w-3.5" /> },
+          { key: 'templates', label: 'Email Templates', icon: <Mail className="h-3.5 w-3.5" /> },
         ] as { key: Tab; label: string; icon?: React.ReactNode }[]).map(t => (
           <button
             key={t.key}
@@ -289,6 +359,113 @@ export function SettingsForm() {
                 </AnimatePresence>
               </div>
 
+              {/* ── Google Sheet card ── */}
+              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                <div className="flex items-center justify-between p-5">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-green-50">
+                      <Sheet className="h-4 w-4 text-green-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">Google Sheet — CV Log</h3>
+                      <p className="text-xs text-slate-500">
+                        {sheetOk
+                          ? 'Sheet connected · candidates auto-logged on processing'
+                          : 'Paste your Google Sheet URL to auto-log every processed CV'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={sheetOk ? 'success' : 'error'}>
+                      {sheetOk
+                        ? <><CheckCircle className="h-3 w-3 mr-1" />Connected</>
+                        : <><XCircle className="h-3 w-3 mr-1" />Not set</>}
+                    </Badge>
+                    <button
+                      onClick={() => setSheetOpen(o => !o)}
+                      className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                    >
+                      {sheetOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      {sheetOk ? 'Update' : 'Configure'}
+                    </button>
+                  </div>
+                </div>
+
+                {sheetOk && !sheetOpen && (
+                  <div className="px-5 pb-4 space-y-2">
+                    <StatusRow label="Sheet URL" value={
+                      (data?.sheet?.sheetUrl || '').length > 60
+                        ? (data?.sheet?.sheetUrl || '').slice(0, 60) + '…'
+                        : (data?.sheet?.sheetUrl || '')
+                    } />
+                    <button
+                      onClick={testSheet}
+                      disabled={testingSheet}
+                      className="flex items-center gap-1.5 mt-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                    >
+                      <RefreshCw className={cn('h-3.5 w-3.5', testingSheet && 'animate-spin')} />
+                      Test Connection
+                    </button>
+                  </div>
+                )}
+
+                <AnimatePresence>
+                  {sheetOpen && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden border-t border-slate-100"
+                    >
+                      <div className="p-5 space-y-3 bg-slate-50/50">
+                        <div className="rounded-xl bg-blue-50 border border-blue-100 px-3 py-2.5 text-[11px] text-blue-700 space-y-1">
+                          <p className="font-bold">One-time setup:</p>
+                          <ol className="list-decimal list-inside space-y-0.5">
+                            <li>Open your Google Sheet → Share</li>
+                            <li>Add <span className="font-mono font-bold">firebase-adminsdk-fbsvc@cv-agent-cfac1.iam.gserviceaccount.com</span> as <strong>Editor</strong></li>
+                            <li>Paste the sheet URL below and save</li>
+                          </ol>
+                        </div>
+                        <Field
+                          label="Google Sheet URL"
+                          value={sheetUrl}
+                          onChange={setSheetUrl}
+                          placeholder="https://docs.google.com/spreadsheets/d/…"
+                          hint="The sheet will be auto-populated with a row for each processed CV"
+                        />
+                        <div className="flex items-center gap-2 pt-1 flex-wrap">
+                          <button
+                            onClick={saveSheet}
+                            disabled={savingSheet}
+                            className="flex items-center gap-1.5 rounded-xl bg-green-600 px-4 py-2 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60 transition-colors"
+                          >
+                            {savingSheet
+                              ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                              : <Save className="h-3.5 w-3.5" />}
+                            {savingSheet ? 'Saving…' : 'Save Sheet URL'}
+                          </button>
+                          <button
+                            onClick={testSheet}
+                            disabled={testingSheet || !sheetUrl.trim()}
+                            className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                          >
+                            <RefreshCw className={cn('h-3.5 w-3.5', testingSheet && 'animate-spin')} />
+                            {testingSheet ? 'Testing…' : 'Test Connection'}
+                          </button>
+                          <button
+                            onClick={() => setSheetOpen(false)}
+                            className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
               {/* ── OpenAI card ── */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
                 <div className="flex items-center justify-between p-5">
@@ -384,6 +561,44 @@ export function SettingsForm() {
                   )}
                 </AnimatePresence>
               </div>
+              {/* ── Test Email Send card ── */}
+              {outlookOk && (
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                  <div className="p-5">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-50">
+                        <Send className="h-4 w-4 text-violet-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-900">Test Email Sending</h3>
+                        <p className="text-xs text-slate-500">
+                          Send a test email to verify Mail.Send permission is configured
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        value={testSendEmail}
+                        onChange={e => setTestSendEmail(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && testSend()}
+                        placeholder="your@email.com"
+                        className="flex-1 h-9 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800 placeholder:text-slate-300 focus:outline-none focus:border-violet-300 focus:bg-white transition-all"
+                      />
+                      <button
+                        onClick={testSend}
+                        disabled={testingSend || !testSendEmail.trim()}
+                        className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition-colors shrink-0"
+                      >
+                        <RefreshCw className={cn('h-3.5 w-3.5', testingSend && 'animate-spin')} />
+                        {testingSend ? 'Sending…' : 'Send Test'}
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      If this fails with &ldquo;Mail.Send permission&rdquo; — go to Azure Portal → App Registrations → your app → API Permissions → Add <strong>Mail.Send</strong> (Application) → Grant admin consent.
+                    </p>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </motion.div>
@@ -393,6 +608,13 @@ export function SettingsForm() {
       {tab === 'usage' && (
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
           <TokenUsagePanel />
+        </motion.div>
+      )}
+
+      {/* ── Email Templates tab ── */}
+      {tab === 'templates' && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          <EmailTemplatesPanel />
         </motion.div>
       )}
     </div>

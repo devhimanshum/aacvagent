@@ -9,6 +9,7 @@ import {
   Copy, MessageSquare, CheckSquare, Square, Zap,
 } from 'lucide-react';
 import { CVPreviewButton } from '@/components/ui/CVPreviewButton';
+import { BulkMailDialog } from '@/components/email/BulkMailDialog';
 import { CandidateFilters, DEFAULT_FILTERS, applyFilters } from '@/components/candidates/CandidateFilters';
 import { aggregateRanks, monthsLabel } from '@/components/candidates/CandidateCard';
 import { apiClient } from '@/lib/utils/api-client';
@@ -392,6 +393,7 @@ export function CandidateReviewBoard() {
   const [error,        setError]        = useState<string | null>(null);
   const [selectedIds,  setSelectedIds]  = useState<Set<string>>(new Set());
   const [bulkLoading,  setBulkLoading]  = useState(false);
+  const [mailDialog,   setMailDialog]   = useState(false);
   const [filters,      setFilters]      = useState<FilterState>(DEFAULT_FILTERS);
 
   const filtered = useMemo(() => applyFilters(candidates, filters), [candidates, filters]);
@@ -551,6 +553,14 @@ export function CandidateReviewBoard() {
                   <UserX className="h-3.5 w-3.5" />
                   Reject All ({selectedIds.size})
                 </button>
+                <button
+                  onClick={() => setMailDialog(true)}
+                  disabled={bulkLoading}
+                  className="flex items-center gap-1.5 rounded-xl bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-600 transition-colors disabled:opacity-60"
+                >
+                  <Mail className="h-3.5 w-3.5" />
+                  Send Email ({selectedIds.size})
+                </button>
               </>
             )}
 
@@ -612,6 +622,15 @@ export function CandidateReviewBoard() {
             ))}
           </div>
         </AnimatePresence>
+      )}
+
+      {mailDialog && (
+        <BulkMailDialog
+          candidates={filtered.filter(c => selectedIds.has(c.id)).map(c => ({
+            id: c.id, name: c.name, email: c.email, currentRank: c.currentRank,
+          }))}
+          onClose={() => setMailDialog(false)}
+        />
       )}
     </div>
   );

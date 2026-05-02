@@ -17,6 +17,7 @@ import {
 } from '@/lib/outlook/client';
 import { extractCVText, isSupportedCVFile } from '@/lib/utils/cv-parser';
 import { analyzeCV } from '@/lib/gemini/agent';
+import { appendCandidateToSheet } from '@/lib/google/sheets';
 // import { uploadCVToStorage } from '@/lib/firebase/storage'; // TODO: enable once Firebase Storage is set up
 import type { ProcessEmailResult } from '@/types';
 
@@ -190,6 +191,25 @@ async function processEmail(
     outlookId: emailId, subject: emailSubject, senderName, senderEmail,
     receivedAt, processedAt: now,
     status: 'processed', candidateId, attachmentName: name,
+  });
+
+  // Append to Google Sheet (fire-and-forget — never blocks CV processing)
+  appendCandidateToSheet({
+    name:                  aiResult.name,
+    email:                 aiResult.email,
+    phone:                 aiResult.phone,
+    currentRank:           aiResult.currentRank,
+    totalSeaServiceMonths: aiResult.totalSeaServiceMonths,
+    rankHistory:           aiResult.rankHistory,
+    education:             aiResult.education,
+    emailSubject,
+    senderEmail,
+    cvFileName:            name,
+    reviewStatus:          'pending',
+  }).catch((err: unknown) => {
+    const e = err as { code?: number; message?: string; response?: { data?: unknown } };
+    console.error('[Google Sheet] Append failed for', aiResult.name, '—', e?.message ?? err);
+    if (e?.response?.data) console.error('[Google Sheet] API detail:', JSON.stringify(e.response.data));
   });
 
   return { emailId, status: 'success', candidateId, message: 'CV analysed — pending admin review' };

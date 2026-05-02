@@ -24,6 +24,7 @@
     "firebase": "^10.12.3",
     "firebase-admin": "^12.2.0",
     "framer-motion": "^11.3.2",
+    "googleapis": "^171.4.0",
     "lucide-react": "^0.408.0",
     "mammoth": "^1.8.0",
     "multer": "^2.0.0",

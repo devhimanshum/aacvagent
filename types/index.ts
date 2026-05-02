@@ -212,3 +212,12 @@ export interface ProcessEmailResult {
   candidateId?: string;
   message: string;
 }
+
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  subject: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+}

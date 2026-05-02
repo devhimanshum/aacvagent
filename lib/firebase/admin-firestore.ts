@@ -98,6 +98,17 @@ export async function adminUndoReview(candidateId: string): Promise<void> {
   await db.collection(srcCollection).doc(candidateId).delete();
 }
 
+// ── Candidates — get a single candidate by ID ─────────────────
+// Searches pending → selected → unselected in order.
+export async function adminGetCandidateById(id: string): Promise<Candidate | null> {
+  const db = adminDb();
+  for (const col of [C.PENDING, C.SELECTED, C.UNSELECTED]) {
+    const snap = await db.collection(col).doc(id).get();
+    if (snap.exists) return toPlain(snap) as unknown as Candidate;
+  }
+  return null;
+}
+
 // ── Candidates — fetch lists ──────────────────────────────────
 export async function adminGetPendingCandidates(): Promise<Candidate[]> {
   const db   = adminDb();

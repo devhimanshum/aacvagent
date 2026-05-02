@@ -2,9 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuthToken, unauthorized } from '@/lib/utils/auth-middleware';
 import {
   adminGetPendingCandidates,
+  adminGetCandidateById,
   adminReviewCandidate,
   adminUndoReview,
 } from '@/lib/firebase/admin-firestore';
+import { updateCandidateStatusInSheet } from '@/lib/google/sheets';
+
+// ── Helper: fire-and-forget sheet update (never blocks the response) ──
+function syncSheetStatus(email: string | undefined, status: string) {
+  if (!email) return;
+  updateCandidateStatusInSheet(email, status).catch(err =>
+    console.error('[Google Sheet] Status sync failed:', err?.message ?? err),
+  );
+}
 
 // GET — list all pending candidates
 export async function GET(req: NextRequest) {
@@ -32,7 +42,14 @@ export async function POST(req: NextRequest) {
     if (!['selected', 'unselected'].includes(decision))
       return NextResponse.json({ success: false, error: 'decision must be selected or unselected' }, { status: 400 });
 
+    // Fetch candidate BEFORE the review so we have the email
+    const candidate = await adminGetCandidateById(candidateId);
+
     await adminReviewCandidate(candidateId, decision, reviewNote?.trim() || undefined);
+
+    // Update the sheet row status (non-blocking)
+    syncSheetStatus(candidate?.email, decision);
+
     return NextResponse.json({ success: true, message: `Candidate marked as ${decision}` });
   } catch (err) {
     console.error('POST /api/candidates/review error:', err);
@@ -53,7 +70,14 @@ export async function PUT(req: NextRequest) {
     if (!candidateId)
       return NextResponse.json({ success: false, error: 'candidateId is required' }, { status: 400 });
 
+    // Fetch candidate BEFORE undo so we still have the email
+    const candidate = await adminGetCandidateById(candidateId);
+
     await adminUndoReview(candidateId);
+
+    // Update the sheet row back to pending (non-blocking)
+    syncSheetStatus(candidate?.email, 'pending');
+
     return NextResponse.json({ success: true, message: 'Decision reversed — candidate moved back to pending' });
   } catch (err) {
     console.error('PUT /api/candidates/review error:', err);

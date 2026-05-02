@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuthToken, unauthorized } from '@/lib/utils/auth-middleware';
 import {
-  getOutlookSettings, getOpenAISettings,
-  saveOutlookSettings, saveOpenAISettings,
+  getOutlookSettings, getOpenAISettings, getSheetSettings,
+  saveOutlookSettings, saveOpenAISettings, saveSheetSettings,
   invalidateCache,
 } from '@/lib/firebase/integration-settings';
 import { validateOutlookConnection, invalidateOutlookTokenCache } from '@/lib/outlook/client';
+import { testSheetConnection } from '@/lib/google/sheets';
+import { sendEmail } from '@/lib/outlook/mailer';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,9 +16,10 @@ export async function GET(req: NextRequest) {
   const uid = await verifyAuthToken(req);
   if (!uid) return unauthorized();
 
-  const [outlookStored, openaiStored] = await Promise.all([
+  const [outlookStored, openaiStored, sheetStored] = await Promise.all([
     getOutlookSettings().catch(() => null),
     getOpenAISettings().catch(() => null),
+    getSheetSettings().catch(() => null),
   ]);
 
   // Also check env vars as fallback indicators
@@ -54,6 +57,10 @@ export async function GET(req: NextRequest) {
       gemini: {
         configured: openaiOk,
         model:      openaiStored?.model || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      },
+      sheet: {
+        configured: !!sheetStored?.sheetUrl,
+        sheetUrl:   sheetStored?.sheetUrl || '',
       },
     },
   });
@@ -111,6 +118,51 @@ export async function POST(req: NextRequest) {
           ? '✅ Outlook connected successfully'
           : `❌ Connection failed: ${result.error}`,
       });
+    }
+
+    // ── Save Google Sheet URL ─────────────────────────────────
+    if (body.type === 'save_sheet') {
+      const { sheetUrl } = body;
+      if (!sheetUrl) {
+        return NextResponse.json(
+          { success: false, error: 'Google Sheet URL is required.' },
+          { status: 400 },
+        );
+      }
+      await saveSheetSettings({ sheetUrl });
+      invalidateCache();
+      return NextResponse.json({ success: true, message: '✅ Google Sheet URL saved!' });
+    }
+
+    // ── Test Google Sheet connection ──────────────────────────
+    if (body.type === 'test_sheet') {
+      const { sheetUrl } = body;
+      if (!sheetUrl) {
+        return NextResponse.json(
+          { success: false, message: '❌ No sheet URL provided.' },
+        );
+      }
+      const result = await testSheetConnection(sheetUrl);
+      return NextResponse.json({ success: result.ok, message: result.message });
+    }
+
+    // ── Test email send ───────────────────────────────────────
+    if (body.type === 'test_send') {
+      const { toEmail } = body;
+      if (!toEmail) {
+        return NextResponse.json({ success: false, message: '❌ Provide a recipient email address.' });
+      }
+      try {
+        await sendEmail({
+          to:      toEmail,
+          subject: 'CV Agent — Test Email',
+          body:    'This is a test email from CV Agent to confirm Mail.Send is working correctly.\n\nIf you received this, bulk email sending is configured properly.',
+        });
+        return NextResponse.json({ success: true, message: `✅ Test email sent to ${toEmail}` });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        return NextResponse.json({ success: false, message: `❌ ${msg}` });
+      }
     }
 
     return NextResponse.json({ success: false, error: 'Unknown action' }, { status: 400 });

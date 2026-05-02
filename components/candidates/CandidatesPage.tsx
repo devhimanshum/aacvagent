@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useMemo, useCallback } from 'react';
-import { Users, Download, RotateCcw, Loader2 } from 'lucide-react';
+import { Users, Download, RotateCcw, Loader2, CheckSquare, Square, Mail } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { CandidateCard } from '@/components/candidates/CandidateCard';
 import { CandidateFilters, DEFAULT_FILTERS, applyFilters } from '@/components/candidates/CandidateFilters';
 import { CardSkeleton } from '@/components/ui/Skeleton';
+import { BulkMailDialog } from '@/components/email/BulkMailDialog';
 import { useCandidates } from '@/hooks/useCandidates';
 import { apiClient } from '@/lib/utils/api-client';
+import { cn } from '@/lib/utils/helpers';
 import toast from 'react-hot-toast';
 import type { FilterState } from '@/components/candidates/CandidateFilters';
 import type { Candidate } from '@/types';
@@ -50,8 +52,10 @@ function exportCSV(candidates: Candidate[], filename: string) {
 
 export function CandidatesPage({ decision, title, subtitle }: CandidatesPageProps) {
   const { candidates, loading, refetch } = useCandidates(decision);
-  const [filters,  setFilters]  = useState<FilterState>(DEFAULT_FILTERS);
-  const [undoing,  setUndoing]  = useState<string | null>(null);
+  const [filters,     setFilters]    = useState<FilterState>(DEFAULT_FILTERS);
+  const [undoing,     setUndoing]    = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [mailDialog,  setMailDialog]  = useState(false);
 
   const filtered = useMemo(() => applyFilters(candidates, filters), [candidates, filters]);
 
@@ -67,6 +71,15 @@ export function CandidatesPage({ decision, title, subtitle }: CandidatesPageProp
       setUndoing(null);
     }
   }, [refetch]);
+
+  const toggleSelect = (id: string) => setSelectedIds(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const toggleAll = () => setSelectedIds(
+    selectedIds.size === filtered.length ? new Set() : new Set(filtered.map(c => c.id))
+  );
+  const allSelected  = filtered.length > 0 && selectedIds.size === filtered.length;
+  const someSelected = selectedIds.size > 0;
 
   const handleExport = useCallback(() => {
     if (filtered.length === 0) {
@@ -102,6 +115,31 @@ export function CandidatesPage({ decision, title, subtitle }: CandidatesPageProp
             }
           />
 
+          {/* ── Selection toolbar ── */}
+          {!loading && filtered.length > 0 && (
+            <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 flex-wrap">
+              <button onClick={toggleAll} className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
+                {allSelected ? <CheckSquare className="h-4 w-4 text-primary-500" /> : <Square className="h-4 w-4 text-slate-300" />}
+                {allSelected ? 'Deselect All' : `Select All (${filtered.length})`}
+              </button>
+              {someSelected && (
+                <>
+                  <div className="w-px h-5 bg-slate-200" />
+                  <span className="text-xs font-semibold text-primary-600 bg-primary-50 rounded-full px-2.5 py-1 border border-primary-100">
+                    {selectedIds.size} selected
+                  </span>
+                  <button
+                    onClick={() => setMailDialog(true)}
+                    className="flex items-center gap-1.5 rounded-xl bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-600 transition-colors"
+                  >
+                    <Mail className="h-3.5 w-3.5" />
+                    Send Email ({selectedIds.size})
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {/* ── Content ── */}
           {loading ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -110,7 +148,19 @@ export function CandidatesPage({ decision, title, subtitle }: CandidatesPageProp
           ) : filtered.length > 0 ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {filtered.map((c, i) => (
-                <div key={c.id} className="relative group">
+                <div
+                  key={c.id}
+                  className={cn('relative group', selectedIds.has(c.id) && 'ring-2 ring-primary-300 rounded-2xl')}
+                >
+                  {/* Checkbox overlay */}
+                  <button
+                    onClick={() => toggleSelect(c.id)}
+                    className="absolute top-3 left-3 z-10 rounded-lg p-0.5 text-slate-300 hover:text-primary-500 transition-colors bg-white/80 backdrop-blur-sm shadow-sm"
+                  >
+                    {selectedIds.has(c.id)
+                      ? <CheckSquare className="h-4 w-4 text-primary-500" />
+                      : <Square className="h-4 w-4" />}
+                  </button>
                   <CandidateCard candidate={c} index={i} />
                   {/* Undo button overlay */}
                   <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -147,6 +197,15 @@ export function CandidatesPage({ decision, title, subtitle }: CandidatesPageProp
           )}
         </div>
       </div>
+
+      {mailDialog && (
+        <BulkMailDialog
+          candidates={filtered.filter(c => selectedIds.has(c.id)).map(c => ({
+            id: c.id, name: c.name, email: c.email, currentRank: c.currentRank,
+          }))}
+          onClose={() => setMailDialog(false)}
+        />
+      )}
     </div>
   );
 }

@@ -18,9 +18,14 @@ export interface OpenAIConfig {
   model:  string;
 }
 
+export interface SheetConfig {
+  sheetUrl: string;
+}
+
 // ── In-memory cache (5 min TTL) ───────────────────────────────
 let cachedOutlook: { data: OutlookConfig | null; at: number } | null = null;
 let cachedOpenAI:  { data: OpenAIConfig  | null; at: number } | null = null;
+let cachedSheet:   { data: SheetConfig   | null; at: number } | null = null;
 const TTL = 5 * 60 * 1000;
 
 function fresh(ts: number) { return Date.now() - ts < TTL; }
@@ -28,6 +33,7 @@ function fresh(ts: number) { return Date.now() - ts < TTL; }
 export function invalidateCache() {
   cachedOutlook = null;
   cachedOpenAI  = null;
+  cachedSheet   = null;
 }
 
 // ── Outlook ───────────────────────────────────────────────────
@@ -86,11 +92,36 @@ export async function saveOpenAISettings(cfg: OpenAIConfig): Promise<void> {
   cachedOpenAI = { data: cfg, at: Date.now() };
 }
 
+// ── Google Sheet ──────────────────────────────────────────────
+export async function getSheetSettings(): Promise<SheetConfig | null> {
+  if (cachedSheet && fresh(cachedSheet.at)) return cachedSheet.data;
+
+  try {
+    const db   = adminDb();
+    const snap = await db.collection('settings').doc('integrations').get();
+    const data = snap.data();
+    const cfg  = data?.sheet as Partial<SheetConfig> | undefined;
+
+    const result = cfg?.sheetUrl ? { sheetUrl: cfg.sheetUrl } : null;
+    cachedSheet = { data: result, at: Date.now() };
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveSheetSettings(cfg: SheetConfig): Promise<void> {
+  const db = adminDb();
+  await db.collection('settings').doc('integrations').set({ sheet: cfg }, { merge: true });
+  cachedSheet = { data: cfg, at: Date.now() };
+}
+
 // ── Combined getter ───────────────────────────────────────────
 export async function getAllIntegrationSettings() {
-  const [outlook, openai] = await Promise.all([
+  const [outlook, openai, sheet] = await Promise.all([
     getOutlookSettings(),
     getOpenAISettings(),
+    getSheetSettings(),
   ]);
-  return { outlook, openai };
+  return { outlook, openai, sheet };
 }
