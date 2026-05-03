@@ -7,6 +7,9 @@
  * Technique: a position-absolute backdrop div mirrors the textarea content,
  * wrapping {{vars}} in <mark> elements with colored backgrounds.
  * The textarea floats above it with bg-transparent so the highlights show through.
+ *
+ * KEY: the backdrop div must have color:transparent so its text is invisible.
+ * Only the <mark> background colors are visible; textarea text sits on top.
  */
 
 import { useRef, useCallback } from 'react';
@@ -18,19 +21,19 @@ export const VARS = [
     tag:        '{{name}}',
     label:      'Full Name',
     chipColor:  'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200',
-    markStyle:  'background:#bfdbfe;border-radius:3px;color:transparent',
+    markBg:     '#bfdbfe',
   },
   {
     tag:        '{{firstName}}',
     label:      'First Name',
     chipColor:  'bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-200',
-    markStyle:  'background:#ddd6fe;border-radius:3px;color:transparent',
+    markBg:     '#ddd6fe',
   },
   {
     tag:        '{{rank}}',
     label:      'Rank',
     chipColor:  'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200',
-    markStyle:  'background:#a7f3d0;border-radius:3px;color:transparent',
+    markBg:     '#a7f3d0',
   },
 ] as const;
 
@@ -45,27 +48,26 @@ function buildHighlightHtml(text: string): string {
     const escaped = v.tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     safe = safe.replace(
       new RegExp(escaped, 'gi'),
-      `<mark style="${v.markStyle}">${v.tag}</mark>`,
+      `<mark style="background:${v.markBg};border-radius:3px;padding:0 1px">${v.tag}</mark>`,
     );
   }
 
-  // Preserve newlines for the backdrop div (pre-wrap already handles this,
-  // but we need a trailing newline so the last empty line has height)
+  // Trailing newline ensures the last empty line has height
   return safe + '\n';
 }
 
 // ── Shared padding / font constants ──────────────────────────
 // Must match exactly between backdrop and textarea
 const SHARED_STYLE: React.CSSProperties = {
-  fontFamily:   'inherit',
-  fontSize:     '0.875rem',   // text-sm
-  lineHeight:   '1.625',      // leading-relaxed
-  padding:      '10px 12px',
+  fontFamily:    'inherit',
+  fontSize:      '0.875rem',  // text-sm
+  lineHeight:    '1.625',     // leading-relaxed
+  padding:       '10px 12px',
   letterSpacing: 'normal',
-  wordBreak:    'break-word',
-  overflowWrap: 'break-word',
-  whiteSpace:   'pre-wrap',
-  tabSize:      4,
+  wordBreak:     'break-word',
+  overflowWrap:  'break-word',
+  whiteSpace:    'pre-wrap',
+  tabSize:       4,
 };
 
 // ── Variable chip bar ─────────────────────────────────────────
@@ -75,7 +77,7 @@ interface ChipBarProps {
   label?: string;
 }
 
-export function VariableChipBar({ onInsert, disabled, label = 'Insert variable:' }: ChipBarProps) {
+export function VariableChipBar({ onInsert, disabled, label = 'Insert:' }: ChipBarProps) {
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide shrink-0">
@@ -115,8 +117,8 @@ export function VariableInput({ value, onChange, placeholder, disabled, classNam
   const insert = useCallback((tag: string) => {
     const el = ref.current;
     if (!el) { onChange(value + tag); return; }
-    const s   = el.selectionStart ?? value.length;
-    const e   = el.selectionEnd   ?? value.length;
+    const s    = el.selectionStart ?? value.length;
+    const e    = el.selectionEnd   ?? value.length;
     const next = value.slice(0, s) + tag + value.slice(e);
     onChange(next);
     requestAnimationFrame(() => {
@@ -127,7 +129,7 @@ export function VariableInput({ value, onChange, placeholder, disabled, classNam
   }, [value, onChange]);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <VariableChipBar onInsert={insert} disabled={disabled} />
       <input
         ref={ref}
@@ -185,7 +187,7 @@ export function VariableEditor({
   }, [value, onChange]);
 
   return (
-    <div className={cn('space-y-2', className)}>
+    <div className={cn('space-y-1.5', className)}>
       {/* Chip bar */}
       <VariableChipBar onInsert={insert} disabled={disabled} />
 
@@ -197,12 +199,14 @@ export function VariableEditor({
           'transition-all',
         )}
       >
-        {/* ── Highlight backdrop ── */}
+        {/* ── Highlight backdrop ──
+            color: transparent is CRITICAL — makes all text invisible so only
+            the <mark> colored backgrounds show. Textarea text sits above. */}
         <div
           ref={bdRef}
           aria-hidden="true"
-          className="absolute inset-0 overflow-hidden pointer-events-none select-none"
-          style={SHARED_STYLE}
+          className="absolute inset-0 pointer-events-none select-none"
+          style={{ ...SHARED_STYLE, color: 'transparent', overflow: 'hidden' }}
           dangerouslySetInnerHTML={{ __html: buildHighlightHtml(value) }}
         />
 
@@ -223,20 +227,6 @@ export function VariableEditor({
           style={{ ...SHARED_STYLE, caretColor: '#1e293b' }}
           spellCheck={false}
         />
-      </div>
-
-      {/* Legend */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {VARS.map(v => (
-          <span key={v.tag} className="flex items-center gap-1 text-[11px] text-slate-400">
-            <span
-              className="inline-block w-2.5 h-2.5 rounded-sm"
-              style={{ background: v.markStyle.match(/background:([^;]+)/)?.[1] }}
-            />
-            {v.tag}
-          </span>
-        ))}
-        <span className="text-[11px] text-slate-300">— highlighted above</span>
       </div>
     </div>
   );
