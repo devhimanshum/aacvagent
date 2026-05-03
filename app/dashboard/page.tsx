@@ -1,17 +1,15 @@
 'use client';
 
-
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Users, Mail,
-  ClipboardList, Activity, Ship, Anchor, Zap,
+  Users, Mail, ClipboardList, Activity, Ship, Anchor, Zap,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { useStats, useCandidates } from '@/hooks/useCandidates';
 import { CandidateCard } from '@/components/candidates/CandidateCard';
 import { CardSkeleton } from '@/components/ui/Skeleton';
-import { AIProcessModal } from '@/components/dashboard/AIProcessModal';
+import { AutoProcessBar, type AutoProcessHandle } from '@/components/dashboard/AutoProcessBar';
 
 const pipeline = [
   {
@@ -37,23 +35,31 @@ const pipeline = [
 ];
 
 export default function DashboardPage() {
-  const [processOpen, setProcessOpen] = useState(false);
+  const processRef = useRef<AutoProcessHandle>(null);
+  const [processing, setProcessing] = useState(false);
+
   const { stats, loading: statsLoading, refetch: refetchStats } = useStats();
   const { candidates: recentCandidates, loading: candidatesLoading, refetch: refetchCandidates } = useCandidates();
 
-  const handleRefresh = useCallback(() => refetchStats(), [refetchStats]);
-
-  const handleProcessComplete = useCallback(() => {
-    refetchStats();
-    refetchCandidates();
+  const handleComplete = useCallback((added: number) => {
+    setProcessing(false);
+    if (added > 0) {
+      refetchStats();
+      refetchCandidates();
+    }
   }, [refetchStats, refetchCandidates]);
 
-  const recent         = recentCandidates.slice(0, 6);
-  const pending        = (stats as Record<string, number>).pending ?? 0;
-  const allCandidates  = stats.total + pending;          // total incl. pending
-  const selectionRate  = stats.total > 0
+  const triggerProcess = useCallback(() => {
+    setProcessing(true);
+    processRef.current?.run();
+  }, []);
+
+  const recent        = recentCandidates.slice(0, 6);
+  const pending       = (stats as Record<string, number>).pending ?? 0;
+  const allCandidates = stats.total + pending;
+  const selectionRate = stats.total > 0
     ? Math.round((stats.selected / stats.total) * 100)
-    : null;                                              // null = no decisions yet
+    : null;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -62,27 +68,28 @@ export default function DashboardPage() {
         subtitle="Maritime crew recruitment overview"
         actions={
           <button
-            onClick={() => setProcessOpen(true)}
-            className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-95"
+            onClick={triggerProcess}
+            disabled={processing}
+            className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60"
             style={{
               background: 'linear-gradient(135deg,#1e40af 0%,#2563eb 100%)',
               boxShadow: '0 4px 14px rgba(37,99,235,0.35)',
             }}
           >
-            <Zap className="h-4 w-4" />
-            AI Process
+            <Zap className={processing ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
+            {processing ? 'Processing…' : 'AI Process'}
           </button>
         }
       />
 
-      <AIProcessModal
-        open={processOpen}
-        onClose={() => setProcessOpen(false)}
-        onComplete={handleProcessComplete}
-      />
-
       <div className="flex-1 overflow-y-auto bg-surface-50">
         <div className="mx-auto max-w-7xl p-6 space-y-6">
+
+          {/* ── Auto-process bar ── */}
+          <AutoProcessBar
+            ref={processRef}
+            onComplete={handleComplete}
+          />
 
           {/* ── Hero banner ── */}
           <motion.div
@@ -99,12 +106,10 @@ export default function DashboardPage() {
                 backgroundSize: '32px 32px',
               }}
             />
-
             {/* Glow orbs */}
             <div className="absolute -top-8 -right-8 h-40 w-40 rounded-full bg-blue-500/10 blur-2xl pointer-events-none" />
             <div className="absolute bottom-0 left-1/3 h-24 w-48 rounded-full bg-maritime-600/8 blur-2xl pointer-events-none" />
-
-            {/* Wave bottom */}
+            {/* Wave */}
             <svg className="absolute bottom-0 left-0 w-full opacity-10" viewBox="0 0 1200 60" preserveAspectRatio="none">
               <path d="M0,30 C200,50 400,10 600,30 C800,50 1000,10 1200,30 L1200,60 L0,60 Z" fill="white"/>
             </svg>
@@ -136,9 +141,9 @@ export default function DashboardPage() {
             {/* Mini stats row */}
             <div className="relative z-10 mt-5 grid grid-cols-3 gap-3">
               {[
-                { label: 'Total CVs',       value: statsLoading ? '—' : allCandidates },
-                { label: 'Selected',        value: statsLoading ? '—' : stats.selected },
-                { label: 'Selection Rate',  value: statsLoading ? '—' : selectionRate !== null ? `${selectionRate}%` : '—' },
+                { label: 'Total CVs',      value: statsLoading ? '—' : allCandidates },
+                { label: 'Selected',       value: statsLoading ? '—' : stats.selected },
+                { label: 'Selection Rate', value: statsLoading ? '—' : selectionRate !== null ? `${selectionRate}%` : '—' },
               ].map(s => (
                 <div key={s.label} className="rounded-xl px-3 py-2.5"
                   style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -167,13 +172,11 @@ export default function DashboardPage() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {pipeline.map((item, idx) => (
                 <div key={item.step} className="relative flex flex-col gap-3 rounded-xl p-4 border border-slate-100 bg-surface-50 overflow-hidden">
-                  {/* Connector line */}
                   {idx < pipeline.length - 1 && (
                     <div className="hidden lg:block absolute -right-1.5 top-1/2 -translate-y-1/2 z-10">
                       <div className="h-px w-3 border-t border-dashed border-slate-300" />
                     </div>
                   )}
-
                   <div className="flex items-center gap-2.5">
                     <div
                       className="flex h-8 w-8 items-center justify-center rounded-lg shrink-0"
@@ -219,7 +222,7 @@ export default function DashboardPage() {
                 </div>
                 <p className="text-sm font-semibold text-slate-600">No candidates yet</p>
                 <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
-                  Configure Outlook & OpenAI in Settings, then click Refresh to start processing CVs.
+                  Configure Outlook & OpenAI in Settings, then the AI process will run automatically.
                 </p>
               </div>
             )}
