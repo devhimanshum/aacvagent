@@ -1,6 +1,5 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Users, Mail, ClipboardList, Activity, Ship, Anchor, Zap,
@@ -9,7 +8,7 @@ import { Header } from '@/components/layout/Header';
 import { useStats, useCandidates } from '@/hooks/useCandidates';
 import { CandidateCard } from '@/components/candidates/CandidateCard';
 import { CardSkeleton } from '@/components/ui/Skeleton';
-import { AutoProcessBar, type AutoProcessHandle } from '@/components/dashboard/AutoProcessBar';
+import { useProcessing } from '@/lib/contexts/processing-context';
 
 const pipeline = [
   {
@@ -35,25 +34,11 @@ const pipeline = [
 ];
 
 export default function DashboardPage() {
-  const processRef = useRef<AutoProcessHandle>(null);
-  const [processing, setProcessing] = useState(false);
+  const { phase, run } = useProcessing();
+  const { stats, loading: statsLoading } = useStats();
+  const { candidates: recentCandidates, loading: candidatesLoading } = useCandidates();
 
-  const { stats, loading: statsLoading, refetch: refetchStats } = useStats();
-  const { candidates: recentCandidates, loading: candidatesLoading, refetch: refetchCandidates } = useCandidates();
-
-  const handleComplete = useCallback((added: number) => {
-    setProcessing(false);
-    if (added > 0) {
-      refetchStats();
-      refetchCandidates();
-    }
-  }, [refetchStats, refetchCandidates]);
-
-  const triggerProcess = useCallback(() => {
-    setProcessing(true);
-    processRef.current?.run();
-  }, []);
-
+  const isActive      = phase === 'scanning' || phase === 'processing';
   const recent        = recentCandidates.slice(0, 6);
   const pending       = (stats as Record<string, number>).pending ?? 0;
   const allCandidates = stats.total + pending;
@@ -62,34 +47,28 @@ export default function DashboardPage() {
     : null;
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col flex-1 overflow-hidden">
       <Header
         title="Dashboard"
         subtitle="Maritime crew recruitment overview"
         actions={
           <button
-            onClick={triggerProcess}
-            disabled={processing}
-            className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60"
+            onClick={run}
+            disabled={isActive}
+            className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
             style={{
               background: 'linear-gradient(135deg,#1e40af 0%,#2563eb 100%)',
               boxShadow: '0 4px 14px rgba(37,99,235,0.35)',
             }}
           >
-            <Zap className={processing ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
-            {processing ? 'Processing…' : 'AI Process'}
+            <Zap className={isActive ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
+            {isActive ? 'Processing…' : 'AI Process'}
           </button>
         }
       />
 
       <div className="flex-1 overflow-y-auto bg-surface-50">
         <div className="mx-auto max-w-7xl p-6 space-y-6">
-
-          {/* ── Auto-process bar ── */}
-          <AutoProcessBar
-            ref={processRef}
-            onComplete={handleComplete}
-          />
 
           {/* ── Hero banner ── */}
           <motion.div
@@ -99,17 +78,13 @@ export default function DashboardPage() {
             className="relative overflow-hidden rounded-2xl p-6 text-white"
             style={{ background: 'linear-gradient(135deg, #040e1e 0%, #071730 40%, #0d254a 75%, #163863 100%)' }}
           >
-            {/* Grid overlay */}
             <div className="absolute inset-0 opacity-[0.04]"
               style={{
                 backgroundImage: 'linear-gradient(rgba(255,255,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px)',
                 backgroundSize: '32px 32px',
               }}
             />
-            {/* Glow orbs */}
             <div className="absolute -top-8 -right-8 h-40 w-40 rounded-full bg-blue-500/10 blur-2xl pointer-events-none" />
-            <div className="absolute bottom-0 left-1/3 h-24 w-48 rounded-full bg-maritime-600/8 blur-2xl pointer-events-none" />
-            {/* Wave */}
             <svg className="absolute bottom-0 left-0 w-full opacity-10" viewBox="0 0 1200 60" preserveAspectRatio="none">
               <path d="M0,30 C200,50 400,10 600,30 C800,50 1000,10 1200,30 L1200,60 L0,60 Z" fill="white"/>
             </svg>
@@ -138,7 +113,6 @@ export default function DashboardPage() {
               </motion.div>
             </div>
 
-            {/* Mini stats row */}
             <div className="relative z-10 mt-5 grid grid-cols-3 gap-3">
               {[
                 { label: 'Total CVs',      value: statsLoading ? '—' : allCandidates },
@@ -168,7 +142,6 @@ export default function DashboardPage() {
               <h2 className="text-sm font-bold text-slate-800">How It Works</h2>
               <span className="ml-auto text-[11px] text-slate-400 font-medium">Automated Pipeline</span>
             </div>
-
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {pipeline.map((item, idx) => (
                 <div key={item.step} className="relative flex flex-col gap-3 rounded-xl p-4 border border-slate-100 bg-surface-50 overflow-hidden">
@@ -178,10 +151,7 @@ export default function DashboardPage() {
                     </div>
                   )}
                   <div className="flex items-center gap-2.5">
-                    <div
-                      className="flex h-8 w-8 items-center justify-center rounded-lg shrink-0"
-                      style={{ background: `${item.color}15` }}
-                    >
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg shrink-0" style={{ background: `${item.color}15` }}>
                       <item.icon className="h-4 w-4" style={{ color: item.color }} />
                     </div>
                     <span className="text-[10px] font-bold text-slate-300 tracking-widest">STEP {item.step}</span>
@@ -222,7 +192,7 @@ export default function DashboardPage() {
                 </div>
                 <p className="text-sm font-semibold text-slate-600">No candidates yet</p>
                 <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
-                  Configure Outlook & OpenAI in Settings, then the AI process will run automatically.
+                  Configure Outlook & OpenAI in Settings — AI processing runs automatically on each login.
                 </p>
               </div>
             )}

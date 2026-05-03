@@ -1,11 +1,13 @@
 'use client';
 
-
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { useAuth } from '@/hooks/useAuth';
 import { AlertTriangle } from 'lucide-react';
+import { ProcessingProvider } from '@/lib/contexts/processing-context';
+import { AutoProcessBar } from '@/components/dashboard/AutoProcessBar';
+import { useStats, useCandidates } from '@/hooks/useCandidates';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, error } = useAuth();
@@ -66,12 +68,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!user) return null;
 
+  return <DashboardShell>{children}</DashboardShell>;
+}
+
+// ── Inner shell — has access to hooks after auth guard ────────
+function DashboardShell({ children }: { children: React.ReactNode }) {
+  const { refetch: refetchStats }      = useStats();
+  const { refetch: refetchCandidates } = useCandidates();
+
+  const handleComplete = useCallback((added: number) => {
+    if (added > 0) {
+      refetchStats();
+      refetchCandidates();
+    }
+  }, [refetchStats, refetchCandidates]);
+
   return (
-    <div className="flex h-screen overflow-hidden bg-surface-50">
-      <Sidebar />
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {children}
-      </main>
-    </div>
+    <ProcessingProvider onComplete={handleComplete}>
+      <div className="flex h-screen overflow-hidden bg-surface-50">
+        <Sidebar />
+        <main className="flex-1 flex flex-col overflow-hidden">
+          {/* AutoProcessBar sits here — persists across ALL tab changes */}
+          <AutoProcessBar />
+          {children}
+        </main>
+      </div>
+    </ProcessingProvider>
   );
 }
