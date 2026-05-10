@@ -46,7 +46,7 @@ export async function getAccessToken(): Promise<string> {
   try {
     const res = await axios.post<{ access_token: string; expires_in: number }>(
       TOKEN_URL(tenantId), params.toString(),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 },
     );
     cachedToken = { token: res.data.access_token, expiresAt: now + res.data.expires_in * 1000 };
     return cachedToken.token;
@@ -104,6 +104,7 @@ export async function fetchEmailsPage(
       '@odata.nextLink'?: string;
       '@odata.count'?: number;
     }>(url, {
+      timeout: 20000,
       headers: {
         Authorization:    `Bearer ${token}`,
         ConsistencyLevel: 'eventual', // required for $count
@@ -156,6 +157,7 @@ export async function fetchEmailsWithAttachments(maxEmails = 5000): Promise<Outl
     while (url && all.length < maxEmails) {
       type PageShape = { value: OutlookEmail[]; '@odata.nextLink'?: string };
       const page: { data: PageShape } = await axios.get<PageShape>(url, {
+        timeout: 20000,
         headers: { Authorization: `Bearer ${token}` },
         params: isFirst ? {
           $filter:  'hasAttachments eq true',
@@ -185,6 +187,7 @@ export async function fetchEmailById(
     const res = await axios.get(
       `${GRAPH_BASE}/users/${encodeURIComponent(inboxEmail)}/messages/${encodedId}`,
       {
+        timeout: 20000,
         headers: { Authorization: `Bearer ${token}` },
         params:  {
           $select: 'id,subject,from,toRecipients,receivedDateTime,hasAttachments,isRead,bodyPreview,body,importance',
@@ -203,7 +206,7 @@ export async function fetchEmailAttachments(emailId: string): Promise<EmailAttac
   try {
     const res = await axios.get(
       `${GRAPH_BASE}/users/${encodeURIComponent(inboxEmail)}/messages/${encodedId}/attachments`,
-      { headers: { Authorization: `Bearer ${token}` }, params: { $select: 'id,name,contentType,size' } },
+      { timeout: 20000, headers: { Authorization: `Bearer ${token}` }, params: { $select: 'id,name,contentType,size' } },
     );
     return (res.data.value || []) as EmailAttachment[];
   } catch (err) { handleGraphError(err, inboxEmail); }
@@ -217,7 +220,7 @@ export async function downloadAttachment(
   const encodedId = encodeURIComponent(emailId);
   const res = await axios.get(
     `${GRAPH_BASE}/users/${encodeURIComponent(inboxEmail)}/messages/${encodedId}/attachments/${attachmentId}`,
-    { headers: { Authorization: `Bearer ${token}` } },
+    { timeout: 30000, headers: { Authorization: `Bearer ${token}` } },
   );
   const att = res.data as EmailAttachment;
   if (!att.contentBytes) throw new Error('Attachment has no content');

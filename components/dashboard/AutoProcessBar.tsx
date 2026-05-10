@@ -230,9 +230,19 @@ export function AutoProcessBar() {
         </AnimatePresence>
 
         {/* ── Error detail ── */}
-        {isError && error && (
-          <div className="bg-red-50 border-b border-red-100 px-4 py-2.5">
-            <p className="text-[11px] text-red-600">{error}</p>
+        {isError && (
+          <div className="bg-red-50 border-b border-red-100 px-4 py-2.5 flex items-center justify-between gap-4">
+            <p className="text-[11px] text-red-600 flex-1">
+              {error || 'Processing failed — check your Outlook and OpenAI configuration in Settings.'}
+            </p>
+            <a
+              href="/api/health"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-[11px] font-semibold text-red-600 underline hover:no-underline"
+            >
+              Run diagnostics →
+            </a>
           </div>
         )}
       </motion.div>

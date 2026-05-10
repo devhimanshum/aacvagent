@@ -38,28 +38,43 @@ export async function GET() {
   }
 
   // ── OpenAI ────────────────────────────────────────────────
-  const openaiKey = process.env.OPENAI_API_KEY || '';
-  if (!openaiKey || openaiKey === 'undefined') {
-    checks.openai = { ok: false, message: 'OPENAI_API_KEY not set in Vercel dashboard' };
-  } else {
-    checks.openai = { ok: true, message: `Key set ✅ (model: ${process.env.OPENAI_MODEL || 'gpt-4o-mini'})` };
+  try {
+    const { getOpenAISettings } = await import('@/lib/firebase/integration-settings');
+    const openaiStored = await getOpenAISettings();
+    const openaiEnvKey = process.env.OPENAI_API_KEY || '';
+    const hasKey = !!(openaiStored?.apiKey || (openaiEnvKey && openaiEnvKey !== 'undefined'));
+    const model  = openaiStored?.model || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+    checks.openai = hasKey
+      ? { ok: true,  message: `Key set ✅ (model: ${model})` }
+      : { ok: false, message: 'No OpenAI API key — go to Settings → Connections and enter your key' };
+  } catch {
+    const openaiEnvKey = process.env.OPENAI_API_KEY || '';
+    const hasKey = !!(openaiEnvKey && openaiEnvKey !== 'undefined');
+    checks.openai = hasKey
+      ? { ok: true,  message: `Key set via env ✅ (model: ${process.env.OPENAI_MODEL || 'gpt-4o-mini'})` }
+      : { ok: false, message: 'OPENAI_API_KEY not configured' };
   }
 
   // ── Outlook ───────────────────────────────────────────────
-  if (!isOutlookConfigured()) {
-    const missing = [
-      !process.env.OUTLOOK_CLIENT_ID     && 'OUTLOOK_CLIENT_ID',
-      !process.env.OUTLOOK_TENANT_ID     && 'OUTLOOK_TENANT_ID',
-      !process.env.OUTLOOK_CLIENT_SECRET && 'OUTLOOK_CLIENT_SECRET',
-      !process.env.OUTLOOK_INBOX_EMAIL   && 'OUTLOOK_INBOX_EMAIL',
-    ].filter(Boolean).join(', ');
-    checks.outlook = { ok: false, message: `Missing: ${missing} — add in Vercel dashboard` };
-  } else {
-    const result = await validateOutlookConnection();
+  const outlookConfigured = await isOutlookConfigured();
+  if (!outlookConfigured) {
     checks.outlook = {
-      ok: result.ok,
-      message: result.ok ? `Connected ✅ (${process.env.OUTLOOK_INBOX_EMAIL})` : result.error || 'Connection failed',
+      ok: false,
+      message: 'Not configured — go to Settings → Connections and enter Outlook credentials',
     };
+  } else {
+    try {
+      const result = await validateOutlookConnection();
+      checks.outlook = {
+        ok: result.ok,
+        message: result.ok ? 'Connected ✅' : `Connection failed: ${result.error}`,
+      };
+    } catch (err) {
+      checks.outlook = {
+        ok: false,
+        message: err instanceof Error ? err.message : 'Connection error',
+      };
+    }
   }
 
   const allOk = Object.values(checks).every(c => c.ok);

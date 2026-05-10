@@ -216,7 +216,8 @@ export async function analyzeCV(cvText: string): Promise<{ result: MaritimeAIRes
   if (!cvText.trim()) throw new Error('CV text is empty');
 
   const { apiKey, model } = await getOpenAIConfig();
-  const client = new OpenAI({ apiKey });
+  // timeout: 45s — OpenAI default is 10 MINUTES which causes permanent frozen spinners
+  const client = new OpenAI({ apiKey, timeout: 45000, maxRetries: 0 });
 
   return withRetry(async () => {
     const response = await client.chat.completions.create({
