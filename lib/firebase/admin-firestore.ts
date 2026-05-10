@@ -248,58 +248,62 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+/**
+ * Derive a stable, deterministic Firestore document ID from a record.
+ * Using a fixed ID means:
+ *   - Duplicate check queries are eliminated entirely (0 reads per batch).
+ *   - Importing the same file twice is idempotent — same ID → same doc overwritten.
+ *   - 9,500 records = 19 batch.set() commits, nothing else.
+ */
+function stableDocId(rec: Omit<LegacyCv, 'id'>): string {
+  // Prefer email as the unique key; fall back to name.
+  const raw = (rec.email || `name__${rec.name}` || '').toLowerCase().trim();
+  const safe = raw
+    .replace(/[^a-z0-9]/g, '_')   // remove chars Firestore dislikes
+    .replace(/_+/g, '_')           // collapse runs of underscores
+    .replace(/^_|_$/g, '')         // trim leading/trailing underscores
+    .slice(0, 500);                // Firestore ID limit is 1500 bytes
+  // Guarantee non-empty
+  return safe || `anon_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export async function adminImportLegacyCvs(
   records: Omit<LegacyCv, 'id'>[],
 ): Promise<{ imported: number; skipped: number }> {
   const db  = adminDb();
   const col = db.collection(C.LEGACY_CVS);
+  const now = new Date().toISOString();
 
-  // ── 1. Collect unique incoming keys ──────────────────────────
-  const incomingEmails    = Array.from(new Set(records.map(r => r.email).filter(Boolean)));
-  const incomingNameKeys  = Array.from(new Set(records.map(r => r.name.toLowerCase().trim()).filter(Boolean)));
-
-  const existingEmails    = new Set<string>();
-  const existingNameKeys  = new Set<string>();
-
-  // Check existing emails in batches of 30 (Firestore 'in' limit)
-  for (const chunk of chunkArray(incomingEmails, 30)) {
-    const snap = await col.where('email', 'in', chunk).select('email').get();
-    snap.docs.forEach(d => { const e = d.get('email') as string; if (e) existingEmails.add(e); });
-  }
-
-  // Check existing name keys in batches of 30
-  for (const chunk of chunkArray(incomingNameKeys, 30)) {
-    const snap = await col.where('nameLower', 'in', chunk).select('nameLower').get();
-    snap.docs.forEach(d => { const n = d.get('nameLower') as string; if (n) existingNameKeys.add(n); });
-  }
-
-  // ── 2. Filter duplicates ──────────────────────────────────────
-  const toInsert = records.filter(r => {
-    if (r.email && existingEmails.has(r.email))                          return false;
-    if (r.name  && existingNameKeys.has(r.name.toLowerCase().trim()))    return false;
+  // De-duplicate within this batch first (same email/name appearing twice in the file)
+  const seen      = new Set<string>();
+  const deduped   = records.filter(r => {
+    const id = stableDocId(r);
+    if (seen.has(id)) return false;
+    seen.add(id);
     return true;
   });
+  const withinFileDups = records.length - deduped.length;
 
-  // ── 3. Batch-write new records ────────────────────────────────
-  const CHUNK = 499;
-  let   imported = 0;
-  const now      = new Date().toISOString();
+  // ── One batch.set() per Firestore-max chunk — ZERO lookup queries ──
+  // batch.set() with a deterministic ID is idempotent:
+  // if the doc already exists it is overwritten with identical data (no harm).
+  const CHUNK = 499;  // Firestore batch limit
+  let   written = 0;
 
-  for (const chunk of chunkArray(toInsert, CHUNK)) {
+  for (const chunk of chunkArray(deduped, CHUNK)) {
     const batch = db.batch();
     for (const rec of chunk) {
-      const ref = col.doc();
-      batch.set(ref, {
+      batch.set(col.doc(stableDocId(rec)), {
         ...rec,
         nameLower: rec.name.toLowerCase().trim(),
         createdAt: now,
       });
     }
     await batch.commit();
-    imported += chunk.length;
+    written += chunk.length;
   }
 
-  return { imported, skipped: records.length - imported };
+  return { imported: written, skipped: withinFileDups };
 }
 
 export async function adminGetLegacyCvsPaged(

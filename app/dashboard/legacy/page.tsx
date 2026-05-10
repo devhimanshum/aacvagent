@@ -53,18 +53,19 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 // ── Import progress state ─────────────────────────────────────
 interface ImportProgress {
-  phase:         'reading' | 'importing' | 'done' | 'error';
-  totalRecords:  number;   // total in JSON
-  totalBatches:  number;
-  batchDone:     number;   // batches completed
-  imported:      number;
-  skipped:       number;
-  error?:        string;
-  fileName:      string;
-  startedAt:     number;   // Date.now()
+  phase:          'reading' | 'importing' | 'done' | 'error';
+  totalRecords:   number;   // total in JSON
+  totalBatches:   number;
+  batchDone:      number;   // batches completed
+  recordsDone:    number;   // actual records processed so far
+  imported:       number;
+  skipped:        number;
+  error?:         string;
+  fileName:       string;
+  startedAt:      number;   // Date.now()
 }
 
-const BATCH_SIZE = 200;    // records per API call
+const BATCH_SIZE = 499;    // Firestore batch limit — 1 write op per API call, no lookup queries
 
 // ── Page-level types ──────────────────────────────────────────
 interface PageData {
@@ -159,7 +160,7 @@ export default function LegacyPage() {
   async function handleFile(file: File) {
     if (!file.name.toLowerCase().endsWith('.json')) {
       setProgress({ phase: 'error', totalRecords: 0, totalBatches: 0, batchDone: 0,
-        imported: 0, skipped: 0, fileName: file.name, startedAt: Date.now(),
+        recordsDone: 0, imported: 0, skipped: 0, fileName: file.name, startedAt: Date.now(),
         error: 'Only .json files are supported.' });
       return;
     }
@@ -168,7 +169,7 @@ export default function LegacyPage() {
 
     // 1. Read & parse
     setProgress({ phase: 'reading', totalRecords: 0, totalBatches: 0, batchDone: 0,
-      imported: 0, skipped: 0, fileName: file.name, startedAt: Date.now() });
+      recordsDone: 0, imported: 0, skipped: 0, fileName: file.name, startedAt: Date.now() });
 
     let records: Record<string, unknown>[];
     try {
@@ -225,11 +226,13 @@ export default function LegacyPage() {
       }
 
       // Update progress after each batch
+      const recordsDone = batches.slice(0, i + 1).reduce((sum, b) => sum + b.length, 0);
       setProgress(p => p ? {
         ...p,
-        batchDone: i + 1,
-        imported:  totalImported,
-        skipped:   totalSkipped,
+        batchDone:   i + 1,
+        recordsDone,
+        imported:    totalImported,
+        skipped:     totalSkipped,
       } : null);
     }
 
@@ -376,7 +379,7 @@ export default function LegacyPage() {
                 <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 text-center">
                   <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Processed</p>
                   <p className="text-lg font-bold text-slate-800 mt-0.5">
-                    {(progress.batchDone * BATCH_SIZE).toLocaleString()}
+                    {(progress.recordsDone ?? 0).toLocaleString()}
                     <span className="text-[10px] text-slate-400 font-normal">/{progress.totalRecords.toLocaleString()}</span>
                   </p>
                 </div>
