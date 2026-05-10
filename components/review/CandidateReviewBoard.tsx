@@ -206,13 +206,7 @@ function CandidateCard({
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              {candidate.duplicate && (
-                <span className="shrink-0 text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-2 py-0.5">
-                  Duplicate
-                </span>
-              )}
-            </div>
+            <div className="flex items-center gap-1.5" />
           </div>
 
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">

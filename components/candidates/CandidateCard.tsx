@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Anchor, Clock, BookOpen,
-  AlertCircle, ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp,
   ClipboardList, Zap,
 } from 'lucide-react';
 import { CVPreviewButton } from '@/components/ui/CVPreviewButton';
@@ -196,9 +196,6 @@ export function CandidateCard({ candidate, index = 0, rankConfig }: CandidateCar
               )}
             </div>
             <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-              {candidate.duplicate && (
-                <Badge variant="duplicate"><AlertCircle className="h-3 w-3 mr-1" />Dup</Badge>
-              )}
               {candidate.rankMatched !== undefined && (
                 <span className={cn(
                   'inline-flex items-center gap-1 text-[10px] font-bold rounded-full px-2 py-0.5 border',

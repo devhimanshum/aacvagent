@@ -108,6 +108,25 @@ async function processEmail(
     return { emailId, status: 'skipped', message: 'Already processed' };
   }
 
+  // Early duplicate check by sender email (saves download + AI tokens)
+  if (senderEmail) {
+    const earlyDup = await adminCheckDuplicate(senderEmail);
+    if (earlyDup) {
+      await adminSaveProcessedEmail({
+        outlookId: emailId, subject: emailSubject, senderName, senderEmail,
+        receivedAt, processedAt: new Date().toISOString(),
+        status: 'skipped',
+        errorMessage: `Duplicate — sender "${senderEmail}" already has a candidate record`,
+      });
+      console.log(`[Process] Early duplicate rejected by sender: ${senderEmail}`);
+      return {
+        emailId,
+        status: 'skipped',
+        message: `Duplicate — ${senderName || senderEmail} already exists`,
+      };
+    }
+  }
+
   // Find a CV attachment
   const attachments  = await fetchEmailAttachments(emailId);
   const cvAttachment = attachments.find(a => isSupportedCVFile(a.contentType, a.name));
@@ -155,8 +174,27 @@ async function processEmail(
     processedAt:   new Date().toISOString(),
   });
 
-  // Duplicate check
-  const isDuplicate = aiResult.email ? await adminCheckDuplicate(aiResult.email) : false;
+  // ── Duplicate check — reject before saving anything ──────────
+  // If a candidate with the same email already exists in any collection,
+  // mark the email processed (so it is never re-attempted) and skip.
+  if (aiResult.email) {
+    const isDuplicate = await adminCheckDuplicate(aiResult.email);
+    if (isDuplicate) {
+      await adminSaveProcessedEmail({
+        outlookId: emailId, subject: emailSubject, senderName, senderEmail,
+        receivedAt, processedAt: new Date().toISOString(),
+        status: 'skipped',
+        attachmentName: name,
+        errorMessage: `Duplicate — candidate with email "${aiResult.email}" already exists`,
+      });
+      console.log(`[Process] Duplicate rejected: ${aiResult.name} <${aiResult.email}>`);
+      return {
+        emailId,
+        status: 'skipped',
+        message: `Duplicate candidate — ${aiResult.name || aiResult.email} already exists`,
+      };
+    }
+  }
 
   // Rank config matching
   const { rankMatched, rankMatchScore } = checkRankMatch(aiResult.rankHistory, rankConfig ?? null);
@@ -180,7 +218,7 @@ async function processEmail(
     emailSubject,
     senderEmail,
     reviewStatus:          'pending',
-    duplicate:             isDuplicate,
+    duplicate:             false,
     rankMatched,
     rankMatchScore,
     processedAt:           now,
@@ -212,7 +250,7 @@ async function processEmail(
     if (e?.response?.data) console.error('[Google Sheet] API detail:', JSON.stringify(e.response.data));
   });
 
-  return { emailId, status: 'success', candidateId, message: 'CV analysed — pending admin review' };
+  return { emailId, status: 'success', candidateId, message: 'CV analysed and added to Selected' };
 }
 
 export async function POST(req: NextRequest) {

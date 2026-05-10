@@ -267,10 +267,12 @@ export async function adminGetStats() {
     db.collection(C.UNSELECTED).count().get(),
     db.collection(C.PROCESSED_EMAILS).count().get(),
   ]);
-  const [dupSel, dupUnsel] = await Promise.all([
-    db.collection(C.SELECTED).where('duplicate', '==', true).count().get(),
-    db.collection(C.UNSELECTED).where('duplicate', '==', true).count().get(),
-  ]);
+  // Count skipped-as-duplicate in processedEmails (new approach — duplicates are never saved)
+  const dupSkippedSnap = await db
+    .collection(C.PROCESSED_EMAILS)
+    .where('status', '==', 'skipped')
+    .count()
+    .get();
 
   const pending    = pendSnap.data().count;
   const selected   = selSnap.data().count;
@@ -282,6 +284,6 @@ export async function adminGetStats() {
     unselected,
     total:           selected + unselected,
     processedEmails: emailsSnap.data().count,
-    duplicates:      dupSel.data().count + dupUnsel.data().count,
+    duplicates:      dupSkippedSnap.data().count,
   };
 }
