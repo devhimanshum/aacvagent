@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Users, Mail, ClipboardList, Activity, Ship, Anchor, Zap,
@@ -35,8 +36,16 @@ const pipeline = [
 
 export default function DashboardPage() {
   const { phase, run } = useProcessing();
-  const { stats, loading: statsLoading } = useStats();
-  const { candidates: recentCandidates, loading: candidatesLoading } = useCandidates();
+  const { stats, loading: statsLoading, refetch: refetchStats } = useStats();
+  const { candidates: recentCandidates, loading: candidatesLoading, refetch: refetchCandidates } = useCandidates();
+
+  // Refresh stats & recent candidates whenever AI processing finishes
+  useEffect(() => {
+    if (phase === 'done') {
+      refetchStats();
+      refetchCandidates();
+    }
+  }, [phase, refetchStats, refetchCandidates]);
 
   const isActive      = phase === 'scanning' || phase === 'processing';
   const recent        = recentCandidates.slice(0, 6);
