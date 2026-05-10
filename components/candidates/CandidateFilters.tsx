@@ -12,19 +12,15 @@ import type { Candidate } from '@/types';
 /* ── Filter state ─────────────────────────────────────────── */
 export interface FilterState {
   search:        string;
-  selectedRanks: string[];   // multi-select, canonical names
-  dateFrom:      string;
-  dateTo:        string;
+  selectedRanks: string[];   // filter against currentRank (primary rank) only
   minSeaService: number;
-  rankMatch:     'all' | 'matched' | 'unmatched';
-  duplicate:     'all' | 'yes' | 'no';
   sortBy:        'date' | 'name' | 'seaService' | 'rankScore';
   sortDir:       'asc' | 'desc';
 }
 
 export const DEFAULT_FILTERS: FilterState = {
-  search: '', selectedRanks: [], dateFrom: '', dateTo: '',
-  minSeaService: 0, rankMatch: 'all', duplicate: 'all',
+  search: '', selectedRanks: [],
+  minSeaService: 0,
   sortBy: 'date', sortDir: 'desc',
 };
 
@@ -32,39 +28,27 @@ export const DEFAULT_FILTERS: FilterState = {
 export function applyFilters(candidates: Candidate[], f: FilterState): Candidate[] {
   let list = [...candidates];
 
+  // Text search: name / email / primary rank (currentRank) only — NOT rank history
   if (f.search.trim()) {
     const q = f.search.trim().toLowerCase();
     list = list.filter(c =>
       c.name?.toLowerCase().includes(q) ||
       c.email?.toLowerCase().includes(q) ||
       c.senderEmail?.toLowerCase().includes(q) ||
-      rankMatchesQuery(c.currentRank ?? '', q),
+      rankMatchesQuery(c.currentRank ?? '', q),   // primary rank, alias-aware
     );
   }
 
+  // Rank chip filter: match against currentRank (primary rank) only — NOT rank history
   if (f.selectedRanks.length > 0) {
     list = list.filter(c =>
       f.selectedRanks.some(sel => ranksMatch(sel, c.currentRank ?? '')),
     );
   }
 
-  if (f.dateFrom) {
-    const from = new Date(f.dateFrom).getTime();
-    list = list.filter(c => new Date(c.processedAt ?? c.createdAt).getTime() >= from);
-  }
-  if (f.dateTo) {
-    const to = new Date(f.dateTo).getTime() + 86_400_000;
-    list = list.filter(c => new Date(c.processedAt ?? c.createdAt).getTime() <= to);
-  }
-
   if (f.minSeaService > 0) {
     list = list.filter(c => (c.totalSeaServiceMonths ?? 0) >= f.minSeaService);
   }
-
-  if (f.rankMatch === 'matched')   list = list.filter(c => c.rankMatched === true);
-  if (f.rankMatch === 'unmatched') list = list.filter(c => c.rankMatched === false);
-  if (f.duplicate === 'yes')       list = list.filter(c =>  c.duplicate);
-  if (f.duplicate === 'no')        list = list.filter(c => !c.duplicate);
 
   list.sort((a, b) => {
     let diff = 0;
@@ -83,7 +67,6 @@ export function activeFilterCount(f: FilterState): number {
   if (f.search)                                    n++;
   if (f.selectedRanks.length > 0)                  n++;
   if (f.minSeaService > 0)                         n++;
-  if (f.rankMatch !== 'all')                       n++;
   if (f.sortBy !== 'date' || f.sortDir !== 'desc') n++;
   return n;
 }
@@ -147,7 +130,7 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
           <input
             value={filters.search}
             onChange={e => set('search', e.target.value)}
-            placeholder="Search name, email or rank…"
+            placeholder="Search by name, email or primary rank…"
             className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 placeholder:text-slate-300 focus:outline-none focus:border-primary-300 focus:bg-white transition-all"
           />
           {filters.search && (
@@ -197,17 +180,23 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
       {expanded && (
         <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-4 space-y-5">
 
-          {/* Rank multi-select — flat list, all 28 ranks */}
+          {/* Primary Rank filter — all 28 ranks as flat chips */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <FLabel icon={Anchor}>
-                Filter by Rank
-                {filters.selectedRanks.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-bold text-primary-700">
-                    {filters.selectedRanks.length}
-                  </span>
-                )}
-              </FLabel>
+              <div className="flex items-center gap-2">
+                <FLabel icon={Anchor}>
+                  Primary Rank
+                  {filters.selectedRanks.length > 0 && (
+                    <span className="ml-1.5 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-bold text-primary-700">
+                      {filters.selectedRanks.length}
+                    </span>
+                  )}
+                </FLabel>
+                {/* badge clarifying scope */}
+                <span className="mb-2 inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                  Current rank only
+                </span>
+              </div>
               {filters.selectedRanks.length > 0 && (
                 <button
                   onClick={() => set('selectedRanks', [])}
@@ -218,7 +207,6 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
               )}
             </div>
 
-            {/* All 28 ranks as a simple wrap of chips */}
             <div className="flex flex-wrap gap-1.5">
               {(MARITIME_RANKS as readonly string[]).map(rank => {
                 const on = filters.selectedRanks.includes(rank);
@@ -240,7 +228,8 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
             </div>
 
             <p className="mt-2 text-[10px] text-slate-400">
-              Checks primary rank only. Synonyms auto-resolved — "2E" and "Second Engineer" are the same.
+              Matches the candidate&apos;s <strong>current (primary) rank</strong> only — rank history is not checked.
+              Synonyms resolved automatically: &ldquo;2E&rdquo;, &ldquo;2/E&rdquo;, &ldquo;2nd Engineer&rdquo; all match <strong>Second Engineer</strong>.
             </p>
           </div>
 
@@ -293,9 +282,6 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
           ))}
           {filters.minSeaService > 0 && (
             <ActiveChip label={`≥ ${seaLabel} sea service`} onRemove={() => set('minSeaService', 0)} />
-          )}
-          {filters.rankMatch !== 'all' && (
-            <ActiveChip label={`Match: ${filters.rankMatch}`} onRemove={() => set('rankMatch', 'all')} />
           )}
           {(filters.sortBy !== 'date' || filters.sortDir !== 'desc') && (
             <ActiveChip label={`Sort: ${filters.sortBy} ${filters.sortDir}`} onRemove={() => onChange({ ...filters, sortBy: 'date', sortDir: 'desc' })} />
