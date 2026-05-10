@@ -2,12 +2,13 @@ export const dynamic = 'force-dynamic';
 
 import { CandidatesPage } from '@/components/candidates/CandidatesPage';
 
-export default function SelectedPage() {
+export default function OnboardPage() {
   return (
     <CandidatesPage
       decision="selected"
-      title="Selected Candidates"
-      subtitle="Candidates who met the criteria"
+      title="Onboard Candidates"
+      subtitle="Candidates approved and ready for onboarding"
+      hideMailButton
     />
   );
 }

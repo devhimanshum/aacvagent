@@ -16,8 +16,8 @@ import toast from 'react-hot-toast';
 const navItems = [
   { href: '/dashboard',            icon: LayoutDashboard,   label: 'Dashboard',   desc: 'Overview' },
   { href: '/dashboard/inbox',      icon: Inbox,             label: 'Inbox',       desc: 'Emails' },
-  { href: '/dashboard/review',     icon: ClipboardList,     label: 'Review',      desc: 'Pending' },
-  { href: '/dashboard/selected',   icon: UserCheck,         label: 'Selected',    desc: 'Approved' },
+  { href: '/dashboard/review',     icon: UserCheck,         label: 'Selected',    desc: 'Review CVs' },
+  { href: '/dashboard/selected',   icon: Anchor,            label: 'Onboard',     desc: 'Onboarded' },
   { href: '/dashboard/unselected', icon: UserX,             label: 'Unselected',  desc: 'Rejected' },
   { href: '/dashboard/config',     icon: SlidersHorizontal, label: 'Rank Config', desc: 'Criteria' },
   { href: '/dashboard/settings',   icon: Settings,          label: 'Settings',    desc: 'System' },

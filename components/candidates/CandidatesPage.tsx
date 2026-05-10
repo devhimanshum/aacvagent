@@ -15,9 +15,11 @@ import type { FilterState } from '@/components/candidates/CandidateFilters';
 import type { Candidate } from '@/types';
 
 interface CandidatesPageProps {
-  decision: 'selected' | 'unselected';
-  title: string;
-  subtitle: string;
+  decision:       'selected' | 'unselected';
+  title:          string;
+  subtitle:       string;
+  /** When true, hides the bulk email send button (used for Onboard section) */
+  hideMailButton?: boolean;
 }
 
 // ── CSV export ────────────────────────────────────────────────
@@ -50,7 +52,7 @@ function exportCSV(candidates: Candidate[], filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function CandidatesPage({ decision, title, subtitle }: CandidatesPageProps) {
+export function CandidatesPage({ decision, title, subtitle, hideMailButton }: CandidatesPageProps) {
   const { candidates, loading, refetch } = useCandidates(decision);
   const [filters,     setFilters]    = useState<FilterState>(DEFAULT_FILTERS);
   const [undoing,     setUndoing]    = useState<string | null>(null);
@@ -128,13 +130,15 @@ export function CandidatesPage({ decision, title, subtitle }: CandidatesPageProp
                   <span className="text-xs font-semibold text-primary-600 bg-primary-50 rounded-full px-2.5 py-1 border border-primary-100">
                     {selectedIds.size} selected
                   </span>
-                  <button
-                    onClick={() => setMailDialog(true)}
-                    className="flex items-center gap-1.5 rounded-xl bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-600 transition-colors"
-                  >
-                    <Mail className="h-3.5 w-3.5" />
-                    Send Email ({selectedIds.size})
-                  </button>
+                  {!hideMailButton && (
+                    <button
+                      onClick={() => setMailDialog(true)}
+                      className="flex items-center gap-1.5 rounded-xl bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-600 transition-colors"
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      Send Email ({selectedIds.size})
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -167,13 +171,13 @@ export function CandidatesPage({ decision, title, subtitle }: CandidatesPageProp
                     <button
                       onClick={() => handleUndo(c.id)}
                       disabled={undoing === c.id}
-                      title="Move back to pending review"
+                      title={decision === 'selected' ? 'Move back to Selected (review queue)' : 'Move back to Selected'}
                       className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-500 shadow-card hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200 transition-all disabled:opacity-60"
                     >
                       {undoing === c.id
                         ? <Loader2 className="h-3 w-3 animate-spin" />
                         : <RotateCcw className="h-3 w-3" />}
-                      Undo
+                      {decision === 'selected' ? 'Back to Selected' : 'Undo'}
                     </button>
                   </div>
                 </div>
@@ -186,11 +190,17 @@ export function CandidatesPage({ decision, title, subtitle }: CandidatesPageProp
                 <Users className="h-7 w-7 text-primary-300" />
               </div>
               <p className="text-sm font-semibold text-slate-600">
-                {filters.search ? 'No matching candidates' : `No ${decision} candidates yet`}
+                {filters.search
+                  ? 'No matching candidates'
+                  : decision === 'selected'
+                    ? 'No onboarded candidates yet'
+                    : 'No unselected candidates yet'}
               </p>
               {!filters.search && (
                 <p className="text-xs text-slate-400 mt-1">
-                  Process CVs from inbox and review them to populate this list
+                  {decision === 'selected'
+                    ? 'Review selected candidates and click Onboard to move them here'
+                    : 'Rejected candidates will appear here after review'}
                 </p>
               )}
             </div>

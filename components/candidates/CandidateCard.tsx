@@ -211,7 +211,7 @@ export function CandidateCard({ candidate, index = 0, rankConfig }: CandidateCar
                 </span>
               )}
               <Badge variant={candidate.reviewStatus === 'selected' ? 'success' : 'error'}>
-                {candidate.reviewStatus}
+                {candidate.reviewStatus === 'selected' ? 'Onboard' : candidate.reviewStatus}
               </Badge>
             </div>
           </div>

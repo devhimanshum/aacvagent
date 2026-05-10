@@ -115,9 +115,9 @@ export default function DashboardPage() {
 
             <div className="relative z-10 mt-5 grid grid-cols-3 gap-3">
               {[
-                { label: 'Total CVs',      value: statsLoading ? '—' : allCandidates },
-                { label: 'Selected',       value: statsLoading ? '—' : stats.selected },
-                { label: 'Selection Rate', value: statsLoading ? '—' : selectionRate !== null ? `${selectionRate}%` : '—' },
+                { label: 'Total CVs',    value: statsLoading ? '—' : allCandidates },
+                { label: 'Onboarded',    value: statsLoading ? '—' : stats.selected },
+                { label: 'Onboard Rate', value: statsLoading ? '—' : selectionRate !== null ? `${selectionRate}%` : '—' },
               ].map(s => (
                 <div key={s.label} className="rounded-xl px-3 py-2.5"
                   style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>

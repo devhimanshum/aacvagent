@@ -290,7 +290,7 @@ function CandidateCard({
             <div className="px-5 py-3 space-y-2 bg-slate-50">
               <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
                 <MessageSquare className="h-3.5 w-3.5" />
-                {pendingDecision === 'selected' ? 'Reason for selection' : 'Reason for rejection'} (optional)
+                {pendingDecision === 'selected' ? 'Reason for onboarding' : 'Reason for rejection'} (optional)
               </label>
               <textarea
                 value={note}
@@ -314,7 +314,7 @@ function CandidateCard({
                   )}
                 >
                   {pendingDecision === 'selected'
-                    ? <><UserCheck className="h-3.5 w-3.5" />Confirm Select</>
+                    ? <><UserCheck className="h-3.5 w-3.5" />Confirm Onboard</>
                     : <><UserX className="h-3.5 w-3.5" />Confirm Reject</>}
                 </button>
               </div>
@@ -343,7 +343,7 @@ function CandidateCard({
               onClick={() => handleDecisionClick('selected')}
               className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition-all hover:bg-emerald-500 hover:text-white hover:border-emerald-500 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <UserCheck className="h-4 w-4" /> Select
+              <UserCheck className="h-4 w-4" /> Onboard
             </button>
           </div>
         )}
@@ -417,7 +417,7 @@ export function CandidateReviewBoard() {
       await apiClient.post('/api/candidates/review', { candidateId, decision, reviewNote: note });
       setCandidates(prev => prev.filter(c => c.id !== candidateId));
       setSelectedIds(prev => { const n = new Set(prev); n.delete(candidateId); return n; });
-      toast.success(decision === 'selected' ? '✅ Candidate selected!' : '❌ Candidate rejected');
+      toast.success(decision === 'selected' ? '✅ Candidate moved to Onboard!' : '❌ Candidate rejected');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Decision failed');
     } finally {
@@ -455,7 +455,7 @@ export function CandidateReviewBoard() {
     }
     setSelectedIds(new Set());
     setBulkLoading(false);
-    if (ok > 0) toast.success(`${ok} candidate${ok > 1 ? 's' : ''} ${decision === 'selected' ? 'selected' : 'rejected'}`);
+    if (ok > 0) toast.success(`${ok} candidate${ok > 1 ? 's' : ''} ${decision === 'selected' ? 'moved to Onboard' : 'rejected'}`);
     if (fail > 0) toast.error(`${fail} failed`);
   }
 
@@ -467,13 +467,13 @@ export function CandidateReviewBoard() {
       {/* ── Header ── */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100">
-            <ClipboardList className="h-5 w-5 text-amber-600" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100">
+            <UserCheck className="h-5 w-5 text-emerald-600" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-slate-900">Pending Review</h2>
+            <h2 className="text-sm font-bold text-slate-900">Selected Candidates</h2>
             <p className="text-xs text-slate-500">
-              {loading ? 'Loading…' : `${candidates.length} candidate${candidates.length !== 1 ? 's' : ''} awaiting decision`}
+              {loading ? 'Loading…' : `${candidates.length} candidate${candidates.length !== 1 ? 's' : ''} awaiting your decision`}
             </p>
           </div>
         </div>
@@ -529,7 +529,7 @@ export function CandidateReviewBoard() {
                   className="flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 transition-colors disabled:opacity-60"
                 >
                   <UserCheck className="h-3.5 w-3.5" />
-                  Select All ({selectedIds.size})
+                  Onboard All ({selectedIds.size})
                 </button>
                 <button
                   disabled={bulkLoading}
@@ -579,7 +579,7 @@ export function CandidateReviewBoard() {
           </div>
           <div>
             <p className="text-base font-bold text-slate-700">All caught up!</p>
-            <p className="text-sm text-slate-400 mt-1">No candidates pending review. Use AI Process to scan your inbox.</p>
+            <p className="text-sm text-slate-400 mt-1">No candidates selected yet. Use AI Process to scan and process your inbox.</p>
           </div>
         </div>
       ) : filtered.length === 0 ? (
