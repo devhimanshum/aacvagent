@@ -53,25 +53,45 @@ export function Sidebar() {
 
       {/* ── Logo / Brand ── */}
       <div
-        className="relative flex h-[80px] items-center justify-center shrink-0 px-3 overflow-hidden"
+        className="relative flex h-[72px] items-center gap-2.5 shrink-0 overflow-hidden px-2.5"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
       >
-        {/* Logo — scales between collapsed / expanded state */}
-        <motion.div
-          animate={{ width: collapsed ? 44 : 180 }}
-          transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
-          className="flex items-center justify-center overflow-hidden"
-        >
+        {/* Logo — height-constrained so it NEVER stretches regardless of sidebar width */}
+        <div className="shrink-0 flex items-center">
           <Image
             src="/logo.svg"
             alt="Logo"
             width={447}
             height={373}
-            className="w-full h-auto rounded-lg object-contain"
-            style={{ filter: 'drop-shadow(0 2px 12px rgba(37,99,235,0.20))' }}
+            className="rounded object-contain"
+            style={{ height: 40, width: 'auto' }}
             priority
           />
-        </motion.div>
+        </div>
+
+        {/* Brand text — only visible when expanded */}
+        <AnimatePresence>
+          {!collapsed && (
+            <motion.div
+              initial={{ opacity: 0, x: -6 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -6 }}
+              transition={{ duration: 0.18 }}
+              className="overflow-hidden whitespace-nowrap leading-tight min-w-0"
+            >
+              <p className="text-[14px] font-bold tracking-wide text-white truncate"
+                style={{ fontFamily: 'Georgia, serif' }}>
+                Shipivishta
+              </p>
+              <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-blue-300/70">
+                Ship Management
+              </p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Red accent dot */}
+        <div className="absolute right-3 top-3 h-1.5 w-1.5 rounded-full bg-maritime-600 shadow-glow-red" />
       </div>
 
       {/* ── Navigation ── */}

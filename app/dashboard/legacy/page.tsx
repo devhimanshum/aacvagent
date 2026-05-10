@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Archive, Upload, Search, ChevronLeft, ChevronRight,
-  Globe, Users, SkipForward,
+  Globe, Users, CheckCircle2, XCircle, Loader2, FileJson,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { EmailLink, PhoneLink } from '@/components/ui/ContactLink';
@@ -12,48 +12,61 @@ import { auth } from '@/lib/firebase/config';
 import { cn } from '@/lib/utils/helpers';
 import type { LegacyCv } from '@/types';
 
-// ── Rank color map ────────────────────────────────────────────
+// ── Rank color ────────────────────────────────────────────────
 function rankColor(rank: string): string {
   const r = rank.toLowerCase();
-  if (r.includes('master') || r.includes('chief officer') || r.includes('chief engineer')) {
+  if (r.includes('master') || r.includes('chief officer') || r.includes('chief engineer'))
     return 'bg-navy-100 text-navy-800 border-navy-200';
-  }
-  if (r.includes('second officer') || r.includes('third officer') || r.includes('2nd officer') || r.includes('3rd officer')) {
+  if (r.includes('second officer') || r.includes('third officer') || r.includes('2nd') || r.includes('3rd officer'))
     return 'bg-blue-100 text-blue-800 border-blue-200';
-  }
-  if (r.includes('engineer')) {
+  if (r.includes('engineer'))
     return 'bg-orange-100 text-orange-800 border-orange-200';
-  }
-  if (r.includes('rating') || r.includes('able') || r.includes('ordinary') || r.includes('bosun') || r.includes('deck')) {
+  if (r.includes('rating') || r.includes('able') || r.includes('ordinary') || r.includes('bosun') || r.includes('deck'))
     return 'bg-teal-100 text-teal-800 border-teal-200';
-  }
-  if (r.includes('cook') || r.includes('steward') || r.includes('catering')) {
+  if (r.includes('cook') || r.includes('steward'))
     return 'bg-pink-100 text-pink-800 border-pink-200';
-  }
   return 'bg-slate-100 text-slate-700 border-slate-200';
 }
 
-// ── Avatar helpers ────────────────────────────────────────────
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
-  if (parts.length === 0 || !parts[0]) return '?';
-  if (parts.length === 1) return parts[0][0].toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  if (!parts[0]) return '?';
+  return parts.length === 1 ? parts[0][0].toUpperCase() : (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-const avatarColors = [
+const AVATAR_COLORS = [
   'bg-blue-500', 'bg-indigo-500', 'bg-violet-500', 'bg-emerald-500',
   'bg-teal-500', 'bg-sky-500', 'bg-amber-500', 'bg-rose-500',
 ];
 function avatarColor(name: string): string {
   let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % avatarColors.length;
-  return avatarColors[h];
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[h];
 }
 
-// ── Types ─────────────────────────────────────────────────────
-type ImportState = 'idle' | 'importing' | 'done' | 'error';
+// ── Chunk helper ──────────────────────────────────────────────
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
+// ── Import progress state ─────────────────────────────────────
+interface ImportProgress {
+  phase:         'reading' | 'importing' | 'done' | 'error';
+  totalRecords:  number;   // total in JSON
+  totalBatches:  number;
+  batchDone:     number;   // batches completed
+  imported:      number;
+  skipped:       number;
+  error?:        string;
+  fileName:      string;
+  startedAt:     number;   // Date.now()
+}
+
+const BATCH_SIZE = 200;    // records per API call
+
+// ── Page-level types ──────────────────────────────────────────
 interface PageData {
   records: LegacyCv[];
   hasMore: boolean;
@@ -63,24 +76,44 @@ interface PageData {
 
 const PAGE_LIMIT = 50;
 
-// ── Main page ─────────────────────────────────────────────────
+// ── Progress bar UI ───────────────────────────────────────────
+function ProgressBar({ pct }: { pct: number }) {
+  return (
+    <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+      <motion.div
+        className="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-400"
+        initial={{ width: 0 }}
+        animate={{ width: `${pct}%` }}
+        transition={{ duration: 0.35, ease: 'easeOut' }}
+      />
+    </div>
+  );
+}
+
+// ── Elapsed time label (rerenders every second) ───────────────
+function ElapsedTimer({ startedAt }: { startedAt: number }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  const m = Math.floor(elapsed / 60);
+  const s = elapsed % 60;
+  return <>{m > 0 ? `${m}m ${s}s` : `${s}s`}</>;
+}
+
+// ═══════════════════════════════════════════════════════════════
 export default function LegacyPage() {
-  const [pageData,     setPageData]     = useState<PageData | null>(null);
-  const [loading,      setLoading]      = useState(false);
-  const [importState,  setImportState]  = useState<ImportState>('idle');
-  const [importCount,  setImportCount]  = useState(0);
-  const [importSkip,   setImportSkip]   = useState(0);
-  const [importError,  setImportError]  = useState('');
-  const [isDragging,   setIsDragging]   = useState(false);
+  const [pageData,    setPageData]    = useState<PageData | null>(null);
+  const [loading,     setLoading]     = useState(false);
+  const [progress,    setProgress]    = useState<ImportProgress | null>(null);
+  const [isDragging,  setIsDragging]  = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [activeSearch,setActiveSearch]= useState('');
+  const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
+  const [currentPage, setCurrentPage] = useState(0);
 
-  // Search state
-  const [searchInput,  setSearchInput]  = useState('');   // what user types
-  const [activeSearch, setActiveSearch] = useState('');   // debounced, sent to API
-
-  // Pagination — separate stacks per search term so switching query resets to page 1
-  const [cursorStack,  setCursorStack]  = useState<Array<string | null>>([null]);
-  const [currentPage,  setCurrentPage]  = useState(0);
-
+  const abortRef   = useRef(false);
   const dragCount  = useRef(0);
   const fileInput  = useRef<HTMLInputElement>(null);
   const debounceId = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,15 +122,14 @@ export default function LegacyPage() {
   const fetchPage = useCallback(async (afterId: string | null, search: string) => {
     setLoading(true);
     try {
-      const token = await auth.currentUser?.getIdToken() ?? '';
+      const token  = await auth.currentUser?.getIdToken() ?? '';
       const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
       if (afterId) params.set('afterId', afterId);
-      if (search)  params.set('search',  search.trim());
-
+      if (search)  params.set('search', search.trim());
       const res  = await fetch(`/api/legacy-cv?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const json = await res.json() as { success: boolean; data?: PageData; error?: string };
+      const json = await res.json() as { success: boolean; data?: PageData };
       if (json.success && json.data) setPageData(json.data);
     } catch (err) {
       console.error('[legacy page] fetch error', err);
@@ -106,122 +138,151 @@ export default function LegacyPage() {
     }
   }, []);
 
-  // Initial load
   useEffect(() => { fetchPage(null, ''); }, [fetchPage]);
 
-  // ── Debounce search → fetch from page 1 ──────────────────
+  // ── Debounce search ───────────────────────────────────────
   useEffect(() => {
     if (debounceId.current) clearTimeout(debounceId.current);
     debounceId.current = setTimeout(() => {
-      const trimmed = searchInput.trim().toLowerCase();
-      if (trimmed === activeSearch) return;           // no real change
-      setActiveSearch(trimmed);
+      const q = searchInput.trim().toLowerCase();
+      if (q === activeSearch) return;
+      setActiveSearch(q);
       setCursorStack([null]);
       setCurrentPage(0);
-      fetchPage(null, trimmed);
+      fetchPage(null, q);
     }, 350);
     return () => { if (debounceId.current) clearTimeout(debounceId.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput]);
 
-  // ── Import JSON ───────────────────────────────────────────
+  // ── Chunked import ────────────────────────────────────────
   async function handleFile(file: File) {
     if (!file.name.toLowerCase().endsWith('.json')) {
-      setImportState('error');
-      setImportError('Only .json files are supported.');
+      setProgress({ phase: 'error', totalRecords: 0, totalBatches: 0, batchDone: 0,
+        imported: 0, skipped: 0, fileName: file.name, startedAt: Date.now(),
+        error: 'Only .json files are supported.' });
       return;
     }
-    setImportState('importing');
-    setImportError('');
 
+    abortRef.current = false;
+
+    // 1. Read & parse
+    setProgress({ phase: 'reading', totalRecords: 0, totalBatches: 0, batchDone: 0,
+      imported: 0, skipped: 0, fileName: file.name, startedAt: Date.now() });
+
+    let records: Record<string, unknown>[];
     try {
       const text   = await file.text();
       const parsed = JSON.parse(text) as unknown;
-      const records = Array.isArray(parsed)
+      const raw    = Array.isArray(parsed)
         ? parsed
         : (parsed as Record<string, unknown[]>).records ?? [];
-
-      const token = await auth.currentUser?.getIdToken() ?? '';
-      const res   = await fetch('/api/legacy-cv', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ records }),
-      });
-      const json = await res.json() as {
-        success: boolean; imported?: number; skipped?: number; error?: string;
-      };
-
-      if (json.success) {
-        setImportCount(json.imported ?? 0);
-        setImportSkip(json.skipped ?? 0);
-        setImportState('done');
-        // Reload list from start (same search)
-        setCursorStack([null]);
-        setCurrentPage(0);
-        fetchPage(null, activeSearch);
-      } else {
-        setImportState('error');
-        setImportError(json.error ?? 'Import failed.');
-      }
+      records = raw.filter((r): r is Record<string, unknown> => r !== null && typeof r === 'object');
     } catch (err) {
-      setImportState('error');
-      setImportError(err instanceof Error ? err.message : 'Failed to read file.');
+      setProgress(p => p ? { ...p, phase: 'error',
+        error: err instanceof Error ? err.message : 'Failed to parse JSON.' } : null);
+      return;
     }
+
+    if (records.length === 0) {
+      setProgress(p => p ? { ...p, phase: 'error', error: 'No valid records found in file.' } : null);
+      return;
+    }
+
+    // 2. Split into chunks and import each
+    const batches      = chunk(records, BATCH_SIZE);
+    const token        = await auth.currentUser?.getIdToken() ?? '';
+    let   totalImported = 0;
+    let   totalSkipped  = 0;
+
+    setProgress(p => p ? {
+      ...p,
+      phase: 'importing',
+      totalRecords: records.length,
+      totalBatches: batches.length,
+    } : null);
+
+    for (let i = 0; i < batches.length; i++) {
+      if (abortRef.current) break;
+
+      try {
+        const res  = await fetch('/api/legacy-cv', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body:    JSON.stringify({ records: batches[i] }),
+        });
+        const json = await res.json() as { success: boolean; imported?: number; skipped?: number; error?: string };
+        if (json.success) {
+          totalImported += json.imported ?? 0;
+          totalSkipped  += json.skipped  ?? 0;
+        } else {
+          console.warn(`[legacy import] batch ${i + 1} failed:`, json.error);
+          totalSkipped += batches[i].length;   // count failed batch as skipped
+        }
+      } catch (err) {
+        console.warn(`[legacy import] batch ${i + 1} network error:`, err);
+        totalSkipped += batches[i].length;
+      }
+
+      // Update progress after each batch
+      setProgress(p => p ? {
+        ...p,
+        batchDone: i + 1,
+        imported:  totalImported,
+        skipped:   totalSkipped,
+      } : null);
+    }
+
+    // 3. Done — refresh the list
+    setProgress(p => p ? { ...p, phase: 'done', imported: totalImported, skipped: totalSkipped } : null);
+    setCursorStack([null]);
+    setCurrentPage(0);
+    fetchPage(null, activeSearch);
   }
 
   // ── Drag handlers ─────────────────────────────────────────
-  function onDragEnter(e: React.DragEvent) {
-    e.preventDefault();
-    dragCount.current++;
-    if (dragCount.current === 1) setIsDragging(true);
-  }
-  function onDragLeave(e: React.DragEvent) {
-    e.preventDefault();
-    dragCount.current--;
-    if (dragCount.current === 0) setIsDragging(false);
-  }
-  function onDragOver(e: React.DragEvent) { e.preventDefault(); }
-  function onDrop(e: React.DragEvent) {
-    e.preventDefault();
-    dragCount.current = 0;
-    setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }
+  const onDragEnter = (e: React.DragEvent) => { e.preventDefault(); dragCount.current++; if (dragCount.current === 1) setIsDragging(true); };
+  const onDragLeave = (e: React.DragEvent) => { e.preventDefault(); dragCount.current--; if (dragCount.current === 0) setIsDragging(false); };
+  const onDragOver  = (e: React.DragEvent) => e.preventDefault();
+  const onDrop      = (e: React.DragEvent) => {
+    e.preventDefault(); dragCount.current = 0; setIsDragging(false);
+    const f = e.dataTransfer.files[0]; if (f) handleFile(f);
+  };
 
   // ── Pagination ────────────────────────────────────────────
   function goNext() {
     if (!pageData?.hasMore || !pageData.nextId) return;
-    const nextAfter = pageData.nextId;
-    const newPage   = currentPage + 1;
-    setCursorStack(s => { const c = [...s]; c[newPage] = nextAfter; return c; });
+    const newPage = currentPage + 1;
+    setCursorStack(s => { const c = [...s]; c[newPage] = pageData.nextId; return c; });
     setCurrentPage(newPage);
-    fetchPage(nextAfter, activeSearch);
+    fetchPage(pageData.nextId, activeSearch);
   }
-
   function goPrev() {
     if (currentPage === 0) return;
-    const prevPage   = currentPage - 1;
-    const prevCursor = cursorStack[prevPage] ?? null;
-    setCurrentPage(prevPage);
-    fetchPage(prevCursor, activeSearch);
+    const prev = currentPage - 1;
+    setCurrentPage(prev);
+    fetchPage(cursorStack[prev] ?? null, activeSearch);
   }
 
-  // ── Derived ───────────────────────────────────────────────
   const total   = pageData?.total ?? 0;
   const showing = pageData?.records.length ?? 0;
   const from    = currentPage * PAGE_LIMIT + 1;
   const to      = currentPage * PAGE_LIMIT + showing;
   const records = pageData?.records ?? [];
 
+  const isImporting = progress?.phase === 'importing' || progress?.phase === 'reading';
+  const pct = progress && progress.totalBatches > 0
+    ? Math.round((progress.batchDone / progress.totalBatches) * 100)
+    : 0;
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <Header
         title="Old CVs"
-        subtitle="Legacy seafarer database — import and browse historical CV records"
+        subtitle="Legacy seafarer database — import and browse historical records"
       />
 
-      <div className="flex-1 overflow-y-auto bg-surface-50 p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto bg-surface-50 p-6 space-y-5">
 
         {/* ── Import zone ──────────────────────────────────── */}
         <div
@@ -230,66 +291,160 @@ export default function LegacyPage() {
           onDragOver={onDragOver}
           onDrop={onDrop}
           className={cn(
-            'relative rounded-2xl border-2 border-dashed transition-all duration-200 p-6',
+            'relative rounded-2xl border-2 border-dashed transition-all duration-200 overflow-hidden',
             isDragging
               ? 'border-primary-400 bg-primary-50/60 shadow-lg shadow-primary-100/50'
               : 'border-slate-200 bg-white hover:border-primary-300 hover:bg-primary-50/10',
           )}
         >
-          <div className="flex flex-col sm:flex-row items-center gap-4">
-            {/* Icon */}
-            <div className={cn(
-              'flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl transition-colors',
-              isDragging ? 'bg-primary-100' : 'bg-slate-100',
-            )}>
-              {importState === 'importing'
-                ? <div className="h-6 w-6 animate-spin rounded-full border-2 border-transparent border-t-primary-500" />
-                : <Upload className={cn('h-6 w-6', isDragging ? 'text-primary-600' : 'text-slate-400')} />
-              }
+          {/* ── Idle / Error drop zone ── */}
+          {(!progress || progress.phase === 'error') && (
+            <div className="flex flex-col sm:flex-row items-center gap-4 p-5">
+              <div className={cn(
+                'flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl transition-colors',
+                isDragging ? 'bg-primary-100' : 'bg-slate-100',
+              )}>
+                <Upload className={cn('h-6 w-6', isDragging ? 'text-primary-600' : 'text-slate-400')} />
+              </div>
+              <div className="flex-1 text-center sm:text-left">
+                <p className="text-sm font-semibold text-slate-700">
+                  {isDragging ? 'Release to start import' : 'Drop a JSON file here, or click Browse'}
+                </p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Supports any size — imported in batches of {BATCH_SIZE} with live progress
+                </p>
+                {progress?.error && (
+                  <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                    <XCircle className="h-3.5 w-3.5 shrink-0" />{progress.error}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => fileInput.current?.click()}
+                className="shrink-0 rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 transition-colors"
+              >
+                Browse File
+              </button>
             </div>
+          )}
 
-            {/* Status text */}
-            <div className="flex-1 text-center sm:text-left">
-              {importState === 'idle' || importState === 'error' ? (
-                <>
-                  <p className="text-sm font-semibold text-slate-700">
-                    {isDragging ? 'Release to import' : 'Drop a JSON file here, or click to browse'}
+          {/* ── Reading phase ── */}
+          {progress?.phase === 'reading' && (
+            <div className="flex items-center gap-4 p-5">
+              <Loader2 className="h-8 w-8 shrink-0 animate-spin text-primary-400" />
+              <div>
+                <p className="text-sm font-semibold text-slate-700">Reading file…</p>
+                <p className="text-xs text-slate-400 mt-0.5">{progress.fileName}</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Importing phase ── */}
+          {progress?.phase === 'importing' && (
+            <div className="p-5 space-y-3">
+              {/* Header row */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileJson className="h-5 w-5 text-primary-500 shrink-0" />
+                  <div>
+                    <p className="text-sm font-bold text-slate-800">
+                      Importing — batch {progress.batchDone} of {progress.totalBatches}
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-0.5 truncate max-w-xs">
+                      {progress.fileName} · {progress.totalRecords.toLocaleString()} records
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-xs text-slate-500 shrink-0">
+                  <span className="font-semibold text-primary-600">{pct}%</span>
+                  <span className="text-slate-300">|</span>
+                  <ElapsedTimer startedAt={progress.startedAt} />
+                  <button
+                    onClick={() => { abortRef.current = true; }}
+                    className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
+                  >
+                    Stop
+                  </button>
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <ProgressBar pct={pct} />
+
+              {/* Live counters */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 text-center">
+                  <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Processed</p>
+                  <p className="text-lg font-bold text-slate-800 mt-0.5">
+                    {(progress.batchDone * BATCH_SIZE).toLocaleString()}
+                    <span className="text-[10px] text-slate-400 font-normal">/{progress.totalRecords.toLocaleString()}</span>
                   </p>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    JSON array — fields: Name, Nationality, Rank, Email, M1/M2/M3
-                  </p>
-                  {importState === 'error' && (
-                    <p className="text-xs text-red-500 mt-1">{importError}</p>
-                  )}
-                </>
-              ) : importState === 'importing' ? (
-                <p className="text-sm font-semibold text-slate-700 animate-pulse">Importing records…</p>
-              ) : (
-                <div>
-                  <p className="text-sm font-semibold text-emerald-700">
-                    {importCount.toLocaleString()} record{importCount !== 1 ? 's' : ''} imported
-                    {importSkip > 0 && (
-                      <span className="ml-2 text-amber-600 font-medium">
-                        · {importSkip.toLocaleString()} duplicate{importSkip !== 1 ? 's' : ''} skipped
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Records with matching email or name were not imported again
-                  </p>
+                </div>
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2 text-center">
+                  <p className="text-[10px] text-emerald-600 font-medium uppercase tracking-wider">Imported</p>
+                  <p className="text-lg font-bold text-emerald-700 mt-0.5">{progress.imported.toLocaleString()}</p>
+                </div>
+                <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-center">
+                  <p className="text-[10px] text-amber-600 font-medium uppercase tracking-wider">Skipped</p>
+                  <p className="text-lg font-bold text-amber-700 mt-0.5">{progress.skipped.toLocaleString()}</p>
+                </div>
+              </div>
+
+              {/* Batch progress dots (show last 20 batches) */}
+              {progress.totalBatches <= 60 && (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {Array.from({ length: progress.totalBatches }).map((_, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        'h-1.5 rounded-full transition-all duration-300',
+                        i < progress.batchDone
+                          ? 'bg-primary-500 w-4'
+                          : i === progress.batchDone
+                            ? 'bg-primary-300 w-4 animate-pulse'
+                            : 'bg-slate-200 w-2',
+                      )}
+                    />
+                  ))}
                 </div>
               )}
             </div>
+          )}
 
-            {/* Browse button */}
-            <button
-              onClick={() => { setImportState('idle'); fileInput.current?.click(); }}
-              disabled={importState === 'importing'}
-              className="shrink-0 rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 disabled:opacity-50 transition-colors"
-            >
-              {importState === 'done' ? 'Import More' : 'Browse File'}
-            </button>
-          </div>
+          {/* ── Done phase ── */}
+          {progress?.phase === 'done' && (
+            <div className="p-5">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-50">
+                  <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-slate-800">Import complete</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{progress.fileName}</p>
+                  <div className="flex items-center gap-4 mt-3">
+                    <span className="text-sm font-semibold text-emerald-700">
+                      ✓ {progress.imported.toLocaleString()} new records added
+                    </span>
+                    {progress.skipped > 0 && (
+                      <span className="text-sm font-medium text-amber-600">
+                        ↷ {progress.skipped.toLocaleString()} duplicates skipped
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setProgress(null); fileInput.current?.click(); }}
+                  className="shrink-0 rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 transition-colors"
+                >
+                  Import More
+                </button>
+              </div>
+              {/* Mini progress bar — full */}
+              <div className="mt-4">
+                <ProgressBar pct={100} />
+              </div>
+            </div>
+          )}
 
           <input
             ref={fileInput}
@@ -310,36 +465,30 @@ export default function LegacyPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
             <input
               type="text"
-              placeholder="Search by name across all records…"
+              placeholder="Search by name…"
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+              className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
             />
-            {/* Clear button */}
             {searchInput && (
               <button
                 onClick={() => setSearchInput('')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-xs"
-              >
-                ✕
-              </button>
+              >✕</button>
             )}
           </div>
-
           <div className="flex items-center gap-3 text-xs text-slate-400 font-medium">
             {total > 0 && (
               <span className="flex items-center gap-1">
                 <Users className="h-3.5 w-3.5" />
                 {activeSearch
                   ? `${total.toLocaleString()} match${total !== 1 ? 'es' : ''}`
-                  : `${total.toLocaleString()} total records`
-                }
+                  : `${total.toLocaleString()} total records`}
               </span>
             )}
             {loading && (
               <span className="flex items-center gap-1.5 text-primary-500">
-                <div className="h-3 w-3 animate-spin rounded-full border border-transparent border-t-primary-500" />
-                Searching…
+                <Loader2 className="h-3 w-3 animate-spin" /> Loading…
               </span>
             )}
           </div>
@@ -347,7 +496,6 @@ export default function LegacyPage() {
 
         {/* ── Records list ─────────────────────────────────── */}
         {!loading && records.length === 0 && total === 0 && !activeSearch ? (
-          /* Empty state — no data at all */
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
             <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-slate-100">
               <Archive className="h-10 w-10 text-slate-300" />
@@ -360,11 +508,9 @@ export default function LegacyPage() {
             </div>
           </div>
         ) : !loading && records.length === 0 && activeSearch ? (
-          /* No search results */
           <div className="flex flex-col items-center justify-center py-16 text-slate-400 text-sm gap-2">
             <Search className="h-8 w-8 text-slate-200" />
             <p>No records match &ldquo;{searchInput}&rdquo;</p>
-            <p className="text-xs text-slate-300">Try a different name prefix</p>
           </div>
         ) : (
           <AnimatePresence mode="popLayout">
@@ -372,47 +518,35 @@ export default function LegacyPage() {
               {records.map((cv, idx) => (
                 <motion.div
                   key={cv.id}
-                  initial={{ opacity: 0, y: 10 }}
+                  initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.18, delay: Math.min(idx * 0.02, 0.25) }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15, delay: Math.min(idx * 0.015, 0.2) }}
                   className="flex items-start gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
                 >
-                  {/* Avatar */}
                   <div className={cn(
                     'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white shadow-sm',
                     avatarColor(cv.name),
                   )}>
                     {initials(cv.name)}
                   </div>
-
-                  {/* Content */}
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <p className="text-sm font-bold text-slate-800 truncate">{cv.name || '(No name)'}</p>
-
                       {cv.nationality && (
                         <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-500">
-                          <Globe className="h-3 w-3 shrink-0" />
-                          {cv.nationality}
+                          <Globe className="h-3 w-3 shrink-0" />{cv.nationality}
                         </span>
                       )}
-
                       {cv.rank && (
-                        <span className={cn(
-                          'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold',
-                          rankColor(cv.rank),
-                        )}>
+                        <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold', rankColor(cv.rank))}>
                           {cv.rank}
                         </span>
                       )}
                     </div>
-
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
                       {cv.email && <EmailLink email={cv.email} size="xs" truncate />}
-                      {cv.phones.map((p, i) => (
-                        <PhoneLink key={i} phone={p} size="xs" />
-                      ))}
+                      {cv.phones.map((p, i) => <PhoneLink key={i} phone={p} size="xs" />)}
                     </div>
                   </div>
                 </motion.div>
@@ -422,54 +556,24 @@ export default function LegacyPage() {
         )}
 
         {/* ── Pagination ───────────────────────────────────── */}
-        {total > PAGE_LIMIT || currentPage > 0 ? (
+        {(total > PAGE_LIMIT || currentPage > 0) && (
           <div className="flex items-center justify-between pt-2">
             <p className="text-xs text-slate-400">
-              {showing > 0
-                ? `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} records`
-                : ''}
+              {showing > 0 ? `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} records` : ''}
             </p>
             <div className="flex items-center gap-2">
-              <button
-                onClick={goPrev}
-                disabled={currentPage === 0 || loading}
-                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Prev
+              <button onClick={goPrev} disabled={currentPage === 0 || loading}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <ChevronLeft className="h-3.5 w-3.5" /> Prev
               </button>
-              <span className="text-xs text-slate-400 font-medium px-1">
-                Page {currentPage + 1}
-              </span>
-              <button
-                onClick={goNext}
-                disabled={!pageData?.hasMore || loading}
-                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                Next
-                <ChevronRight className="h-3.5 w-3.5" />
+              <span className="text-xs text-slate-400 font-medium px-1">Page {currentPage + 1}</span>
+              <button onClick={goNext} disabled={!pageData?.hasMore || loading}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                Next <ChevronRight className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
-        ) : null}
-
-        {/* Skip info banner (shown once per import if any skipped) */}
-        <AnimatePresence>
-          {importState === 'done' && importSkip > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-700"
-            >
-              <SkipForward className="h-4 w-4 shrink-0 text-amber-500" />
-              <span>
-                <strong>{importSkip.toLocaleString()}</strong> record{importSkip !== 1 ? 's were' : ' was'} skipped
-                because a matching email or name already exists in the database.
-              </span>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        )}
 
       </div>
     </div>
