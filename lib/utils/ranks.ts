@@ -1,152 +1,182 @@
 /**
- * Single source of truth for maritime ranks used across:
- * - AI extraction prompt (canonical names)
- * - Email processing (rank matching / synonym resolution)
- * - Candidate filters (multi-select, synonym search)
+ * Single source of truth for maritime ranks across:
+ * - AI extraction prompt  (MARITIME_RANKS)
+ * - Email / upload processing  (ranksMatch)
+ * - Rank config form  (MARITIME_RANKS)
+ * - Candidate filters  (RANK_GROUPS, rankMatchesQuery)
  */
 
-// ── Canonical rank names (definitive list) ────────────────────
+// ── Canonical rank names — 28 ranks in display order ─────────
 export const MARITIME_RANKS = [
   'Master',
   'Chief Officer',
-  'Second Officer',
   'Third Officer',
+  'Second Officer',
   'Deck Cadet',
   'Chief Engineer',
   'Second Engineer',
   'Third Engineer',
   'Fourth Engineer',
-  'TME/Fifth Engineer',
-  'Electrical Officer - COC',
-  'Electrical Officer - without COC',
+  'Fifth Engineer',
+  'Electrical Officer',
   'Electrical Cadet',
   'Bosun',
-  'AB Deck',
+  'Able Seafarer Deck',
   'Ordinary Seamen',
-  'Pumpman',
-  'AB Engine',
-  'Fitter',
+  'Motorman',
   'Wiper',
+  'Fitter',
   'Gas Engineer',
+  'Cargo Engineer',
   'Chief Cook',
-  'Messman/GS/Asst. Cook',
+  'General Steward',
+  'Pumpman',
+  'Trainee Messman',
+  'Riding Crew',
+  'Junior Fourth Engineer',
+  'Junior Third Officer',
+  'Cadet',
 ] as const;
 
 export type CanonicalRank = typeof MARITIME_RANKS[number];
 
-// ── Aliases: canonical (lower) → all known name variants (lower) ─
-// Each key MUST match normalizeRank(canonical) exactly.
+// ── Aliases: normalizeRank(canonical) → all known variants ───
+// Keys must exactly match normalizeRank() applied to each canonical name.
 export const RANK_ALIASES: Record<string, string[]> = {
   'master': [
-    'captain', 'master mariner', 'commanding officer', 'cmd', 'capt', 'm/m', 'capt.',
-    'ship master', 'vessel master',
+    'captain', 'capt', 'capt.', 'master mariner', 'commanding officer',
+    'cmd', 'm/m', 'ship master', 'vessel master',
   ],
   'chief officer': [
-    'c/o', 'chief mate', '1st officer', 'first officer', '1/o', 'chief off', 'c.o.',
-    '1st off', 'chief officer mate',
-  ],
-  'second officer': [
-    '2nd officer', '2/o', 'second mate', '2nd mate', '2nd off', 'navigating officer',
-    '2nd ofcr', 'second off',
+    'co', 'c/o', 'c.o.', 'chief mate', 'chief off',
+    '1st officer', 'first officer', '1/o', '1st off',
+    'chief officer mate',
   ],
   'third officer': [
-    '3rd officer', '3/o', 'third mate', '3rd mate', '3rd off', '3rd ofcr', 'third off',
+    '3rd officer', '3o', '3/o', '3rd off', 'third off',
+    '3rd ofcr', 'third mate', '3rd mate',
+  ],
+  'second officer': [
+    '2nd officer', '2o', '2/o', '2nd off', 'second off',
+    '2nd ofcr', 'second mate', '2nd mate', 'navigating officer',
   ],
   'deck cadet': [
-    'navigating cadet', 'cadet (deck)', 'trainee deck officer', 'deck officer cadet',
-    'cadet officer', 'junior officer deck', 'deck trainee',
+    'navigating cadet', 'cadet (deck)', 'deck officer cadet',
+    'trainee deck officer', 'junior officer deck', 'deck trainee',
+    'cadet officer deck',
   ],
   'chief engineer': [
-    'c/e', '1st engineer', 'first engineer', 'chief engr', 'chief engg', '1/e', 'c.e.',
-    '1st engr', 'chief engineer officer',
+    'ce', 'c/e', 'c.e.', 'chief eng', 'chief engr', 'chief engg',
+    '1st engineer', 'first engineer', '1/e', '1st engr',
+    'chief engineer officer',
   ],
   'second engineer': [
-    '2nd engineer', '2/e', 'second engr', '2nd engr', '2nd engg', '2nd eng',
-    'second engineer officer', '2nd engineer officer',
+    '2nd engineer', '2e', '2/e', 'second engr', '2nd engr',
+    '2nd engg', '2nd eng', 'second engineer officer', '2nd engineer officer',
   ],
   'third engineer': [
-    '3rd engineer', '3/e', 'third engr', '3rd engr', '3rd engg', '3rd eng',
-    'third engineer officer',
+    '3rd engineer', '3e', '3/e', 'third engr', '3rd engr',
+    '3rd engg', '3rd eng', 'third engineer officer',
   ],
   'fourth engineer': [
-    '4th engineer', '4/e', 'fourth engr', '4th engr', '4th engg', '4th eng',
-    'fourth engineer officer',
+    '4th engineer', '4e', '4/e', 'fourth engr', '4th engr',
+    '4th engg', '4th eng', 'fourth engineer officer',
   ],
-  'tme/fifth engineer': [
-    '5th engineer', 'fifth engineer', 'tme', 'junior engineer', '5/e', '5th engr',
-    '5th engg', 'trainee marine engineer', 'tme/5th engineer',
+  'fifth engineer': [
+    '5th engineer', '5e', '5/e', 'fifth engr', '5th engr',
+    'trainee marine engineer', 'tme', 'tme/fifth engineer',
+    'engine cadet', 'junior engineer', 'junior fifth engineer',
   ],
-  'electrical officer - coc': [
-    'eto', 'electro technical officer', 'electro-technical officer', 'e.t.o.',
-    'electrical officer coc', 'elec officer (coc)', 'electrical officer (coc)',
-  ],
-  'electrical officer - without coc': [
-    'electrical officer', 'electrician', 'elec officer', 'e/o',
-    'electrical officer (without coc)', 'electrical officer without coc',
+  'electrical officer': [
+    'eto', 'e.t.o.', 'electro technical officer', 'electro-technical officer',
+    'electrical officer coc', 'electrical officer - coc',
+    'electrical officer - without coc', 'electrical officer without coc',
+    'elec officer', 'e/o',
   ],
   'electrical cadet': [
-    'eto cadet', 'cadet (eto)', 'electrical cadet trainee', 'junior eto',
+    'eto cadet', 'cadet (eto)', 'electro technical cadet',
+    'electrical cadet trainee', 'junior eto',
   ],
   'bosun': [
-    'boatswain', "bo'sun", 'bosun/ab', "bos'n", 'boat swain',
+    'boatswain', "bo'sun", "bos'n", 'bosun/ab', 'boat swain',
   ],
-  'ab deck': [
-    'able seaman', 'ab', 'a.b.', 'able bodied seaman', 'able bodied', 'a/b deck',
-    'deck ab', 'able seaman (deck)', 'able seaman deck', 'a.b. deck',
+  'able seafarer deck': [
+    'ab', 'a.b.', 'able seaman', 'able bodied seaman', 'able bodied',
+    'a/b deck', 'deck ab', 'able seaman deck', 'a.b. deck', 'ab deck',
+    'able seafarer (deck)',
   ],
   'ordinary seamen': [
-    'ordinary seaman', 'os', 'o.s.', 'ord seaman', 'ord. seaman', 'ordinary seaman deck',
+    'ordinary seaman', 'os', 'o.s.', 'ord seaman', 'ord. seaman',
+    'ordinary seaman deck',
   ],
-  'pumpman': [
-    'pump man', 'pump operator', 'p/m', 'pump-man',
-  ],
-  'ab engine': [
-    'motorman', 'engine ab', 'oiler/motorman', 'engine room ab', 'a/b engine',
-    'able seaman (engine)', 'able seaman engine', 'a.b. engine',
-  ],
-  'fitter': [
-    'engine fitter', 'motorman fitter', 'fitter/welder', 'welder fitter',
-    'mechanical fitter',
+  'motorman': [
+    'oiler', 'motor man', 'able seafarer engine', 'a/b engine',
+    'ab engine', 'able seaman engine', 'engine ab', 'oiler/motorman',
+    'engine room ab', 'able seafarer (engine)',
   ],
   'wiper': [
-    'engine wiper', 'engine room wiper', 'oiler', 'e/r wiper', 'er wiper',
+    'engine wiper', 'engine room wiper', 'e/r wiper', 'er wiper',
+  ],
+  'fitter': [
+    'deck fitter', 'engine fitter', 'motorman fitter',
+    'fitter/welder', 'mechanical fitter', 'welder fitter',
   ],
   'gas engineer': [
     'gas eng', 'lng engineer', 'gas engineer officer',
   ],
+  'cargo engineer': [
+    'cargo eng', 'cargo engineer officer',
+  ],
   'chief cook': [
     'cook', 'ship cook', 'head cook', 'cook/baker', '1st cook',
   ],
-  'messman/gs/asst. cook': [
-    'messman', 'gs', 'general steward', 'assistant cook', 'asst. cook', 'asst cook',
-    'steward', 'messboy', 'general service', 'asst cook/gs',
+  'general steward': [
+    'gs', 'assistant cook', 'asst cook', 'asst. cook',
+    'steward', 'chief steward', 'messman', 'messboy',
+    'messman/gs/asst. cook', 'general service',
+  ],
+  'pumpman': [
+    'pump man', 'pump operator', 'p/m', 'pump-man',
+  ],
+  'trainee messman': [
+    'trainee mess man', 'messman trainee', 'trainee mess',
+  ],
+  'riding crew': [
+    'riding squad', 'riding gang',
+  ],
+  'junior fourth engineer': [
+    'junior 4th engineer', 'jr 4e', 'jr. 4th engineer', 'j/4e',
+    'jr fourth engineer',
+  ],
+  'junior third officer': [
+    'junior 3rd officer', 'jr 3o', 'jr. 3rd officer', 'j/3o',
+    'jr third officer',
+  ],
+  'cadet': [
+    'trainee officer', 'officer cadet', 'marine cadet',
+    'sea cadet', 'junior cadet',
   ],
 };
 
-// ── Helpers ───────────────────────────────────────────────────
+// ── Core helpers ──────────────────────────────────────────────
 
-/** Reduce a rank string to a minimal comparable form */
+/** Reduce a rank string to minimal comparable form */
 export function normalizeRank(rank: string): string {
   return (rank || '').toLowerCase().replace(/[^a-z0-9/]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
- * Resolve any rank variant to its canonical name.
- * Falls back to the original string if not found.
+ * Resolve any rank variant → canonical name from MARITIME_RANKS.
+ * Returns the original string if no match found.
  */
 export function canonicalizeRank(rank: string): string {
   const n = normalizeRank(rank);
 
   for (const [canonKey, aliases] of Object.entries(RANK_ALIASES)) {
-    // Exact canonical match
-    if (n === canonKey) {
+    if (n === canonKey || aliases.includes(n)) {
       return MARITIME_RANKS.find(r => normalizeRank(r) === canonKey) ?? rank;
     }
-    // Exact alias match
-    if (aliases.includes(n)) {
-      return MARITIME_RANKS.find(r => normalizeRank(r) === canonKey) ?? rank;
-    }
-    // Partial containment (handles "Chief Officer Grade I" etc.)
+    // Partial containment (handles "Chief Officer Grade I", "3/O Navigating" etc.)
     if (n.includes(canonKey) || aliases.some(a => n.includes(a) || a.includes(n))) {
       return MARITIME_RANKS.find(r => normalizeRank(r) === canonKey) ?? rank;
     }
@@ -155,26 +185,22 @@ export function canonicalizeRank(rank: string): string {
 }
 
 /**
- * Returns true when two rank strings refer to the same position.
- * Resolves synonyms before comparing.
+ * True when two rank strings refer to the same position (synonym-aware).
  */
 export function ranksMatch(a: string, b: string): boolean {
   if (!a || !b) return false;
-  const ca = normalizeRank(canonicalizeRank(a));
-  const cb = normalizeRank(canonicalizeRank(b));
-  return ca === cb;
+  return normalizeRank(canonicalizeRank(a)) === normalizeRank(canonicalizeRank(b));
 }
 
 /**
- * Returns true when a candidate's current rank matches the query.
- * Supports synonym resolution: "2nd Engineer" matches "Second Engineer".
+ * True when a candidate's currentRank matches the search query.
+ * Supports synonym resolution: typing "2e" matches "Second Engineer".
  */
 export function rankMatchesQuery(currentRank: string, query: string): boolean {
   if (!currentRank || !query) return false;
   const nRank  = normalizeRank(currentRank);
   const nQuery = normalizeRank(query);
-  if (nRank.includes(nQuery)) return true;             // direct substring
-  // Canonicalize both sides and check again
+  if (nRank.includes(nQuery)) return true;
   const cRank  = normalizeRank(canonicalizeRank(currentRank));
   const cQuery = normalizeRank(canonicalizeRank(query));
   return cRank.includes(cQuery) || cQuery.includes(cRank);
@@ -182,10 +208,10 @@ export function rankMatchesQuery(currentRank: string, query: string): boolean {
 
 // ── Filter UI groupings ───────────────────────────────────────
 export interface RankGroup {
-  label: string;
-  chipColor:    string;   // inactive chip style
-  activeColor:  string;   // active/selected chip style
-  ranks:        string[]; // canonical rank names in this group
+  label:       string;
+  chipColor:   string;
+  activeColor: string;
+  ranks:       string[];
 }
 
 export const RANK_GROUPS: RankGroup[] = [
@@ -193,36 +219,42 @@ export const RANK_GROUPS: RankGroup[] = [
     label:       'Deck Officers',
     chipColor:   'border-blue-200 text-blue-700 bg-white hover:bg-blue-50',
     activeColor: 'border-blue-500 bg-blue-500 text-white',
-    ranks:       ['Master', 'Chief Officer', 'Second Officer', 'Third Officer', 'Deck Cadet'],
+    ranks: [
+      'Master', 'Chief Officer', 'Second Officer', 'Third Officer',
+      'Junior Third Officer', 'Deck Cadet', 'Cadet',
+    ],
   },
   {
     label:       'Engine Officers',
     chipColor:   'border-orange-200 text-orange-700 bg-white hover:bg-orange-50',
     activeColor: 'border-orange-500 bg-orange-500 text-white',
-    ranks:       ['Chief Engineer', 'Second Engineer', 'Third Engineer', 'Fourth Engineer', 'TME/Fifth Engineer'],
+    ranks: [
+      'Chief Engineer', 'Second Engineer', 'Third Engineer',
+      'Fourth Engineer', 'Junior Fourth Engineer', 'Fifth Engineer',
+    ],
   },
   {
     label:       'Electrical',
     chipColor:   'border-yellow-300 text-yellow-700 bg-white hover:bg-yellow-50',
     activeColor: 'border-yellow-500 bg-yellow-500 text-white',
-    ranks:       ['Electrical Officer - COC', 'Electrical Officer - without COC', 'Electrical Cadet'],
+    ranks: ['Electrical Officer', 'Electrical Cadet'],
   },
   {
     label:       'Deck Ratings',
     chipColor:   'border-cyan-200 text-cyan-700 bg-white hover:bg-cyan-50',
     activeColor: 'border-cyan-500 bg-cyan-500 text-white',
-    ranks:       ['Bosun', 'AB Deck', 'Ordinary Seamen', 'Pumpman'],
+    ranks: ['Bosun', 'Able Seafarer Deck', 'Ordinary Seamen', 'Pumpman', 'Riding Crew'],
   },
   {
     label:       'Engine Ratings',
     chipColor:   'border-red-200 text-red-700 bg-white hover:bg-red-50',
     activeColor: 'border-red-500 bg-red-500 text-white',
-    ranks:       ['AB Engine', 'Fitter', 'Wiper', 'Gas Engineer'],
+    ranks: ['Motorman', 'Wiper', 'Fitter', 'Gas Engineer', 'Cargo Engineer'],
   },
   {
-    label:       'Catering',
+    label:       'Catering / General',
     chipColor:   'border-pink-200 text-pink-700 bg-white hover:bg-pink-50',
     activeColor: 'border-pink-500 bg-pink-500 text-white',
-    ranks:       ['Chief Cook', 'Messman/GS/Asst. Cook'],
+    ranks: ['Chief Cook', 'General Steward', 'Trainee Messman'],
   },
 ];

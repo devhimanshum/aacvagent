@@ -13,36 +13,10 @@ import { apiClient } from '@/lib/utils/api-client';
 import { cn } from '@/lib/utils/helpers';
 import toast from 'react-hot-toast';
 import type { RankConfig, RankRequirement } from '@/types';
-
-// ── Default ranks (ordered by seniority) ─────────────────────
-const DEFAULT_RANKS = [
-  'Master',
-  'Chief Officer',
-  'Second Officer',
-  'Third Officer',
-  'Deck Cadet',
-  'Chief Engineer',
-  'Second Engineer',
-  'Third Engineer',
-  'Fourth Engineer',
-  'TME/Fifth Engineer',
-  'Electrical Officer - COC',
-  'Electrical Officer - without COC',
-  'Electrical Cadet',
-  'Fitter',
-  'Bosun',
-  'AB Deck',
-  'AB Engine',
-  'Ordinary Seamen',
-  'Wiper',
-  'Gas Engineer',
-  'Pumpman',
-  'Chief Cook',
-  'Messman/GS/Asst. Cook',
-];
+import { MARITIME_RANKS } from '@/lib/utils/ranks';
 
 function buildDefaults(): RankRequirement[] {
-  return DEFAULT_RANKS.map((rank, i) => ({ rank, enabled: true, order: i + 1 }));
+  return (MARITIME_RANKS as readonly string[]).map((rank, i) => ({ rank, enabled: true, order: i + 1 }));
 }
 
 // Re-assign `order` after any reorder / add / delete so it always
