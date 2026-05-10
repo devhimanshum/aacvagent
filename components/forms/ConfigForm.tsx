@@ -13,7 +13,7 @@ import { apiClient } from '@/lib/utils/api-client';
 import { cn } from '@/lib/utils/helpers';
 import toast from 'react-hot-toast';
 import type { RankConfig, RankRequirement } from '@/types';
-import { MARITIME_RANKS, normalizeRank } from '@/lib/utils/ranks';
+import { MARITIME_RANKS, RANK_ALIASES, normalizeRank } from '@/lib/utils/ranks';
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -25,6 +25,15 @@ function buildDefaults(): RankRequirement[] {
 
 function reindex(list: RankRequirement[]): RankRequirement[] {
   return list.map((r, i) => ({ ...r, order: i + 1 }));
+}
+
+/** Return display-friendly synonyms for a rank (title-cased, max 5 shown) */
+function getRankSynonyms(rank: string): string[] {
+  const key = normalizeRank(rank);
+  const aliases = RANK_ALIASES[key] ?? [];
+  return aliases
+    .slice(0, 6)
+    .map(a => a.replace(/\b\w/g, c => c.toUpperCase()));
 }
 
 /** True if the stored rank list is different from the new standard 28 */
@@ -44,6 +53,8 @@ interface RowProps {
 }
 
 function RankRow({ req, index, isDragging, onToggle, onDelete }: RowProps) {
+  const synonyms = getRankSynonyms(req.rank);
+
   return (
     <div
       className={cn(
@@ -68,13 +79,23 @@ function RankRow({ req, index, isDragging, onToggle, onDelete }: RowProps) {
         {index + 1}
       </span>
 
-      {/* Rank name */}
-      <span className={cn(
-        'flex-1 text-sm font-medium truncate',
-        req.enabled ? 'text-slate-900' : 'text-slate-400',
-      )}>
-        {req.rank}
-      </span>
+      {/* Rank name + synonyms */}
+      <div className="flex-1 min-w-0">
+        <p className={cn(
+          'text-sm font-semibold leading-tight truncate',
+          req.enabled ? 'text-slate-900' : 'text-slate-400',
+        )}>
+          {req.rank}
+        </p>
+        {synonyms.length > 0 && (
+          <p className={cn(
+            'text-[10px] leading-snug mt-0.5 truncate',
+            req.enabled ? 'text-slate-400' : 'text-slate-300',
+          )}>
+            {synonyms.join(' · ')}
+          </p>
+        )}
+      </div>
 
       {/* Toggle */}
       <button
