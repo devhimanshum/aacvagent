@@ -1,26 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" fill="none">
-  <!-- Dark background -->
-  <rect width="80" height="80" rx="18" fill="#040e1e"/>
+  <!-- Dark navy background -->
+  <rect width="80" height="80" rx="16" fill="#071220"/>
 
-  <!-- Subtle inner glow -->
-  <rect width="80" height="80" rx="18" fill="url(#glow)" opacity="0.4"/>
-  <defs>
-    <radialGradient id="glow" cx="50%" cy="35%" r="55%">
-      <stop offset="0%" stop-color="#2563eb" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#040e1e" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
+  <!-- Subtle radial glow behind the V -->
+  <radialGradient id="vglow" cx="50%" cy="55%" r="48%">
+    <stop offset="0%" stop-color="#DC2626" stop-opacity="0.18"/>
+    <stop offset="100%" stop-color="#071220" stop-opacity="0"/>
+  </radialGradient>
+  <rect width="80" height="80" rx="16" fill="url(#vglow)"/>
 
   <!-- Red bold V / chevron (downward) -->
-  <polyline points="12,20 40,58 68,20"
-    stroke="#C0392B" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <!-- Inner highlight -->
-  <polyline points="12,20 40,58 68,20"
-    stroke="#e74c3c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.4"/>
+  <!-- Outer stroke for depth -->
+  <polyline points="10,17 40,55 70,17"
+    stroke="#7f1d1d" stroke-width="13"
+    stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Main red stroke -->
+  <polyline points="10,17 40,55 70,17"
+    stroke="#DC2626" stroke-width="10"
+    stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Inner highlight for gloss -->
+  <polyline points="10,17 40,55 70,17"
+    stroke="#f87171" stroke-width="3.5"
+    stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.4"/>
 
   <!-- Blue maritime waves -->
-  <path d="M6 68 Q17 60 28 68 Q39 76 50 68 Q61 60 74 65"
-    stroke="#2563eb" stroke-width="3.5" stroke-linecap="round" fill="none"/>
-  <path d="M10 76 Q21 68 32 76 Q43 84 54 76 Q63 70 74 73"
-    stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" fill="none" opacity="0.6"/>
+  <path d="M6 65 C14 61 22 69 30 65 C38 61 46 69 54 65 C62 61 68 65 74 63"
+    stroke="#2563eb" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+  <path d="M10 73 C18 69 26 77 34 73 C42 69 50 77 58 73 C64 70 70 73 74 71"
+    stroke="#60a5fa" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.5"/>
 </svg>
