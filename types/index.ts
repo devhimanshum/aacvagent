@@ -21,13 +21,14 @@ export interface RankConfig {
 
 // ── Rank history extracted from CV ───────────────────────────
 export interface RankEntry {
-  rank: string;
-  vessel?: string;
-  company?: string;
-  from?: string;
-  to?: string;
+  rank:          string;
+  vessel?:       string;   // vessel name (e.g. "MV Pacific Star")
+  vesselType?:   string;   // ship type (e.g. "Bulk Carrier", "Oil Tanker")
+  company?:      string;
+  from?:         string;
+  to?:           string;
   durationMonths?: number;
-  isPresentRole?: boolean;
+  isPresentRole?:  boolean;
 }
 
 // ── Maritime document (Passport / CDC / COC / COP) ───────────

@@ -80,6 +80,16 @@ ${cvText.substring(0, 12000)}
 - Set this to the SUM of ALL individual durationMonths values.
 - Double-check: if individual entries sum to X, totalSeaServiceMonths must equal X.
 
+### Vessel type rules:
+- For each rank history entry, extract the type/category of ship (NOT the vessel name).
+  Common types: Bulk Carrier, Oil Tanker, Chemical Tanker, Product Tanker, VLCC, ULCC,
+  LNG Carrier, LPG Carrier, Container Ship, General Cargo, Ro-Ro, Car Carrier, Passenger,
+  Offshore Supply Vessel (OSV), AHTS, Platform Supply Vessel (PSV), Dredger, Reefer, etc.
+- Look for columns or fields labelled "Type", "Type of Ship", "Vessel Type", "Ship Type",
+  "Type of Vessel", or any similar label in the sea-service table.
+- If the vessel type is not stated for an entry, leave vesselType as "".
+- Never confuse vessel name with vessel type.
+
 ### Other rules:
 - Extract ALL sea-service entries from the CV — do not skip any.
 - Education: include CoC grade, STCW certificates, flag state endorsements.
@@ -104,6 +114,7 @@ Respond ONLY with a valid JSON object — no markdown, no code fences, no explan
     {
       "rank": "Chief Engineer",
       "vessel": "MV Pacific Star",
+      "vesselType": "Bulk Carrier",
       "company": "Pacific Shipping Ltd",
       "from": "March 2022",
       "to": "Present",
@@ -113,6 +124,7 @@ Respond ONLY with a valid JSON object — no markdown, no code fences, no explan
     {
       "rank": "Second Engineer",
       "vessel": "MT Ocean Blue",
+      "vesselType": "Oil Tanker",
       "company": "Blue Ocean Shipping",
       "from": "January 2019",
       "to": "February 2022",
@@ -134,11 +146,12 @@ Respond ONLY with a valid JSON object — no markdown, no code fences, no explan
 
 function safeRankEntry(r: Partial<RankEntry>): RankEntry {
   return {
-    rank:           String(r.rank || '').trim(),
-    vessel:         String(r.vessel  || '').trim(),
-    company:        String(r.company || '').trim(),
-    from:           String(r.from    || '').trim(),
-    to:             String(r.to      || '').trim(),
+    rank:           String(r.rank       || '').trim(),
+    vessel:         String(r.vessel     || '').trim(),
+    vesselType:     String(r.vesselType || '').trim(),
+    company:        String(r.company    || '').trim(),
+    from:           String(r.from       || '').trim(),
+    to:             String(r.to         || '').trim(),
     durationMonths: Math.max(0, Number(r.durationMonths) || 0),
     isPresentRole:  Boolean(r.isPresentRole),
   };

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Anchor, Clock, BookOpen,
   ChevronDown, ChevronUp,
-  ClipboardList, Zap, FileText, ShieldCheck,
+  ClipboardList, Zap, FileText, ShieldCheck, Ship,
 } from 'lucide-react';
 import { CVPreviewButton } from '@/components/ui/CVPreviewButton';
 import { Badge } from '@/components/ui/Badge';
@@ -94,6 +94,79 @@ function orderedRankExp(
   });
 }
 
+// ── Aggregate vessel types from rank history ──────────────────
+export function aggregateVesselTypes(
+  history: RankEntry[],
+): { vesselType: string; totalMonths: number }[] {
+  const map = new Map<string, number>();
+  for (const e of history) {
+    const vt = (e.vesselType || '').trim();
+    if (!vt) continue;
+    map.set(vt, (map.get(vt) ?? 0) + (e.durationMonths ?? 0));
+  }
+  return Array.from(map.entries())
+    .map(([vesselType, totalMonths]) => ({ vesselType, totalMonths }))
+    .sort((a, b) => b.totalMonths - a.totalMonths);
+}
+
+// ── Vessel type color chips ───────────────────────────────────
+const VESSEL_COLORS: Record<string, string> = {
+  'bulk carrier':           'bg-amber-50 text-amber-700 border-amber-200',
+  'oil tanker':             'bg-rose-50 text-rose-700 border-rose-200',
+  'chemical tanker':        'bg-purple-50 text-purple-700 border-purple-200',
+  'product tanker':         'bg-orange-50 text-orange-700 border-orange-200',
+  'vlcc':                   'bg-red-50 text-red-700 border-red-200',
+  'ulcc':                   'bg-red-50 text-red-800 border-red-200',
+  'lng carrier':            'bg-sky-50 text-sky-700 border-sky-200',
+  'lpg carrier':            'bg-cyan-50 text-cyan-700 border-cyan-200',
+  'container ship':         'bg-indigo-50 text-indigo-700 border-indigo-200',
+  'container':              'bg-indigo-50 text-indigo-700 border-indigo-200',
+  'general cargo':          'bg-teal-50 text-teal-700 border-teal-200',
+  'ro-ro':                  'bg-emerald-50 text-emerald-700 border-emerald-200',
+  'car carrier':            'bg-green-50 text-green-700 border-green-200',
+  'passenger':              'bg-pink-50 text-pink-700 border-pink-200',
+  'offshore supply vessel': 'bg-blue-50 text-blue-700 border-blue-200',
+  'osv':                    'bg-blue-50 text-blue-700 border-blue-200',
+  'ahts':                   'bg-blue-50 text-blue-800 border-blue-200',
+  'psv':                    'bg-blue-50 text-blue-600 border-blue-200',
+  'dredger':                'bg-stone-50 text-stone-700 border-stone-200',
+  'reefer':                 'bg-lime-50 text-lime-700 border-lime-200',
+};
+
+function vesselTypeColor(vt: string): string {
+  return VESSEL_COLORS[vt.toLowerCase()] ?? 'bg-slate-50 text-slate-600 border-slate-200';
+}
+
+// ── Vessel type summary section ───────────────────────────────
+function VesselTypeSection({ history }: { history: RankEntry[] }) {
+  const types = aggregateVesselTypes(history);
+  if (types.length === 0) return null;
+  return (
+    <div className="pt-1 space-y-1.5">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
+        <Ship className="h-3 w-3" /> Vessel Types
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {types.map(({ vesselType, totalMonths }) => (
+          <span
+            key={vesselType}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold',
+              vesselTypeColor(vesselType),
+            )}
+            title={`${monthsLabel(totalMonths)} on ${vesselType}`}
+          >
+            {vesselType}
+            {totalMonths > 0 && (
+              <span className="opacity-60 text-[10px] font-medium">{monthsLabel(totalMonths)}</span>
+            )}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Rank experience bar ───────────────────────────────────────
 function RankExpBar({ rank, totalMonths, isPresentRole, maxMonths }: {
   rank: string; totalMonths: number; isPresentRole: boolean; maxMonths: number;
@@ -139,6 +212,14 @@ function RankHistoryRow({ entry }: { entry: RankEntry }) {
         </div>
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
           {entry.vessel  && <span className="flex items-center gap-1 text-slate-500"><Anchor className="h-3 w-3 text-slate-300" />{entry.vessel}</span>}
+          {entry.vesselType && (
+            <span className={cn(
+              'inline-flex items-center gap-1 rounded-full border px-1.5 py-0 text-[10px] font-semibold',
+              vesselTypeColor(entry.vesselType),
+            )}>
+              <Ship className="h-2.5 w-2.5" />{entry.vesselType}
+            </span>
+          )}
           {entry.company && <span className="text-slate-400">{entry.company}</span>}
           {(entry.from || entry.to) && (
             <span className="text-slate-400">{entry.from}{entry.from && entry.to ? ' – ' : ''}{entry.to}</span>
@@ -300,6 +381,9 @@ export function CandidateCard({ candidate, index = 0, rankConfig }: CandidateCar
             )}
           </div>
         )}
+
+        {/* Vessel types — always visible summary chips */}
+        <VesselTypeSection history={history} />
       </div>
 
       {/* ── Expanded detail ── */}

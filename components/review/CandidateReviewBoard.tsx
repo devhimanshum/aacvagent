@@ -6,7 +6,7 @@ import {
   UserCheck, UserX, RefreshCw, Mail,
   Anchor, Clock, BookOpen, AlertCircle,
   CheckCircle2, ClipboardList, ChevronDown, ChevronUp,
-  CheckSquare, Square, Zap, MessageSquare, ShieldCheck,
+  CheckSquare, Square, Zap, MessageSquare, ShieldCheck, Ship,
 } from 'lucide-react';
 import { EmailLink, PhoneLink } from '@/components/ui/ContactLink';
 import { CVPreviewButton } from '@/components/ui/CVPreviewButton';
@@ -106,6 +106,11 @@ function RankTimeline({ history }: { history: RankEntry[] }) {
             </div>
             <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
               {entry.vessel  && <span className="flex items-center gap-1 text-slate-500"><Anchor className="h-3 w-3 text-slate-300" />{entry.vessel}</span>}
+              {entry.vesselType && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0 text-[10px] font-semibold text-blue-700">
+                  <Ship className="h-2.5 w-2.5" />{entry.vesselType}
+                </span>
+              )}
               {entry.company && <span className="text-slate-400">{entry.company}</span>}
               {(entry.from || entry.to) && <span className="text-slate-400">{entry.from}{entry.from && entry.to ? ' – ' : ''}{entry.to}</span>}
             </div>
@@ -274,6 +279,29 @@ function CandidateCard({
           <RankExperienceSummary history={candidate.rankHistory ?? []} rankConfig={rankConfig} />
         </div>
       )}
+
+      {/* ── Vessel types ── */}
+      {(() => {
+        const vtypes = (candidate.rankHistory ?? [])
+          .map(e => e.vesselType?.trim())
+          .filter((v): v is string => !!v);
+        const unique = Array.from(new Map(vtypes.map(v => [v.toLowerCase(), v])).values());
+        if (unique.length === 0) return null;
+        return (
+          <div className="mx-5 mb-3 rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 flex items-center gap-1.5">
+              <Ship className="h-3 w-3" /> Vessel Types
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {unique.map(vt => (
+                <span key={vt} className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[11px] font-semibold text-blue-700">
+                  {vt}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Raw rank history toggle ── */}
       <div className="border-t border-slate-100">
