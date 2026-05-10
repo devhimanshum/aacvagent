@@ -13,7 +13,7 @@ import { apiClient } from '@/lib/utils/api-client';
 import { cn } from '@/lib/utils/helpers';
 import toast from 'react-hot-toast';
 import type { RankConfig, RankRequirement } from '@/types';
-import { MARITIME_RANKS, RANK_GROUPS, normalizeRank } from '@/lib/utils/ranks';
+import { MARITIME_RANKS, normalizeRank } from '@/lib/utils/ranks';
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -25,17 +25,6 @@ function buildDefaults(): RankRequirement[] {
 
 function reindex(list: RankRequirement[]): RankRequirement[] {
   return list.map((r, i) => ({ ...r, order: i + 1 }));
-}
-
-/** Find which group a rank belongs to (for badge colouring) */
-function rankGroupInfo(rank: string): { label: string; badge: string } | null {
-  const n = normalizeRank(rank);
-  for (const g of RANK_GROUPS) {
-    if (g.ranks.some(r => normalizeRank(r) === n)) {
-      return { label: g.label, badge: g.chipColor };
-    }
-  }
-  return null;
 }
 
 /** True if the stored rank list is different from the new standard 28 */
@@ -55,8 +44,6 @@ interface RowProps {
 }
 
 function RankRow({ req, index, isDragging, onToggle, onDelete }: RowProps) {
-  const group = rankGroupInfo(req.rank);
-
   return (
     <div
       className={cn(
@@ -88,16 +75,6 @@ function RankRow({ req, index, isDragging, onToggle, onDelete }: RowProps) {
       )}>
         {req.rank}
       </span>
-
-      {/* Category badge */}
-      {group && (
-        <span className={cn(
-          'hidden sm:inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap',
-          group.badge,
-        )}>
-          {group.label}
-        </span>
-      )}
 
       {/* Toggle */}
       <button
@@ -167,50 +144,6 @@ function AddRankRow({ onAdd }: { onAdd: (name: string) => void }) {
       <button onClick={() => { setName(''); setOpen(false); }} className="shrink-0 rounded-lg p-1 text-slate-400 hover:bg-slate-200 transition-colors">
         <X className="h-4 w-4" />
       </button>
-    </div>
-  );
-}
-
-// ── Reference panel: all 28 standard ranks grouped ───────────
-function StandardRanksPanel() {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4">
-      <div className="flex items-center gap-2">
-        <Anchor className="h-4 w-4 text-primary-500" />
-        <p className="text-sm font-bold text-slate-800">28 Standard Maritime Ranks</p>
-      </div>
-
-      <div className="space-y-3">
-        {RANK_GROUPS.map(group => (
-          <div key={group.label}>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
-              {group.label}
-            </p>
-            <div className="flex flex-wrap gap-1">
-              {group.ranks.map((rank, i) => (
-                <span
-                  key={rank}
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold',
-                    group.chipColor,
-                  )}
-                >
-                  <span className="opacity-50 text-[10px]">{
-                    // find global order number
-                    (MARITIME_RANKS as readonly string[]).indexOf(rank) + 1
-                  }.</span>
-                  {rank}
-                </span>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <p className="text-[10px] text-slate-400 border-t border-slate-100 pt-3">
-        Drag to reorder priority. Toggle to enable / disable for matching. Synonyms are resolved
-        automatically — "2nd Engineer", "2E", "2/E" all match <strong>Second Engineer</strong>.
-      </p>
     </div>
   );
 }
@@ -306,10 +239,7 @@ export function ConfigForm() {
   }
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-6 items-start">
-
-      {/* ── Left: drag list ── */}
-      <div className="space-y-4">
+    <div className="space-y-4">
 
         {/* Outdated rank notice */}
         {outdated && (
@@ -372,16 +302,15 @@ export function ConfigForm() {
         <div className="flex items-center gap-3 rounded-xl bg-blue-50 border border-blue-100 px-4 py-2.5">
           <GripVertical className="h-4 w-4 text-blue-400 shrink-0" />
           <p className="text-xs text-blue-700 leading-relaxed">
-            <strong>Drag rows</strong> to set priority (1 = highest). Toggle the switch to enable / disable. Category badge shown on each row. Synonyms are resolved automatically during CV matching.
+            <strong>Drag rows</strong> to set priority (1 = highest). Toggle the switch to enable / disable a rank. Synonyms are resolved automatically — "2E", "2/E", "2nd Engineer" all match <strong>Second Engineer</strong>.
           </p>
         </div>
 
         {/* Column header */}
-        <div className="grid grid-cols-[20px_28px_1fr_auto_36px_28px] items-center gap-3 px-3 pb-1 border-b border-slate-100">
+        <div className="grid grid-cols-[20px_28px_1fr_36px_28px] items-center gap-3 px-3 pb-1 border-b border-slate-100">
           <span />
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">#</span>
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Rank</span>
-          <span className="hidden sm:block text-[10px] font-bold uppercase tracking-wider text-slate-400">Category</span>
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">Active</span>
           <span />
         </div>
@@ -421,24 +350,18 @@ export function ConfigForm() {
 
         <AddRankRow onAdd={addRank} />
 
-        {/* Save bar */}
-        <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 flex-wrap">
-          <p className="text-xs text-slate-400">
-            Order and active state apply to all future CV processing and filtering.
-          </p>
-          <Button
-            onClick={handleSave}
-            loading={saving}
-            icon={saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-          >
-            {saved ? 'Saved!' : 'Save Configuration'}
-          </Button>
-        </div>
-      </div>
-
-      {/* ── Right: reference panel ── */}
-      <div className="xl:sticky xl:top-6">
-        <StandardRanksPanel />
+      {/* Save bar */}
+      <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 flex-wrap">
+        <p className="text-xs text-slate-400">
+          Order and active state apply to all future CV processing and filtering.
+        </p>
+        <Button
+          onClick={handleSave}
+          loading={saving}
+          icon={saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+        >
+          {saved ? 'Saved!' : 'Save Configuration'}
+        </Button>
       </div>
     </div>
   );
