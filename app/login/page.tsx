@@ -91,27 +91,19 @@ export default function LoginPage() {
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: 0.6, delay: 0.1 }}
-            className="inline-flex items-center justify-center mb-8"
-            style={{ filter: 'drop-shadow(0 0 32px rgba(37,99,235,0.25))' }}
+            className="inline-flex items-center justify-center mb-10"
+            style={{ filter: 'drop-shadow(0 4px 24px rgba(37,99,235,0.30))' }}
           >
             <Image
-              src="/logo-mark.svg"
-              alt="Shipivishta"
-              width={96}
-              height={96}
-              className="rounded-3xl"
+              src="/logo.svg"
+              alt="Logo"
+              width={447}
+              height={373}
+              className="rounded-2xl object-contain"
+              style={{ width: 220, height: 'auto' }}
               priority
             />
           </motion.div>
-
-          {/* Brand name */}
-          <h1 className="text-4xl font-bold text-white tracking-wide mb-1"
-            style={{ fontFamily: 'Georgia, serif', textShadow: '0 2px 20px rgba(37,99,235,0.3)' }}>
-            Shipivishta
-          </h1>
-          <p className="text-blue-300/70 text-xs font-semibold uppercase tracking-[0.25em] mb-10">
-            Ship Management Pvt Ltd
-          </p>
 
           {/* Divider */}
           <div className="flex items-center gap-4 mb-10">
@@ -157,13 +149,16 @@ export default function LoginPage() {
         >
           {/* Mobile logo */}
           <div className="flex lg:hidden items-center gap-3 mb-8">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl overflow-hidden"
-              style={{ boxShadow: '0 4px 16px rgba(7,23,48,0.3)' }}>
-              <Image src="/logo-mark.svg" alt="Shipivishta" width={48} height={48} className="rounded-2xl" />
-            </div>
-            <div>
-              <p className="text-lg font-bold text-navy-900" style={{ fontFamily: 'Georgia, serif' }}>Shipivishta</p>
-              <p className="text-[10px] text-slate-400 uppercase tracking-widest">Ship Management Pvt Ltd</p>
+            <div className="flex items-center justify-center rounded-2xl overflow-hidden bg-[#000000]"
+              style={{ boxShadow: '0 4px 16px rgba(7,23,48,0.3)', padding: 4 }}>
+              <Image
+                src="/logo.svg"
+                alt="Logo"
+                width={447}
+                height={373}
+                className="rounded-xl object-contain"
+                style={{ width: 88, height: 'auto' }}
+              />
             </div>
           </div>
 
