@@ -5,6 +5,10 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Shipivishta — Maritime CV Management',
   description: 'AI-powered maritime crew CV screening and candidate management platform by Shipivishta Ship Management Pvt Ltd',
+  icons: {
+    icon: '/logo-mark.svg',
+    apple: '/logo-mark.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

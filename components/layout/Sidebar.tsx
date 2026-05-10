@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Inbox, UserCheck, UserX, Settings,
   SlidersHorizontal, LogOut, ChevronLeft, ChevronRight,
-  ClipboardList, Anchor,
+  Anchor, UploadCloud,
 } from 'lucide-react';
 import { cn } from '@/lib/utils/helpers';
 import { useAuth } from '@/hooks/useAuth';
@@ -16,28 +17,13 @@ import toast from 'react-hot-toast';
 const navItems = [
   { href: '/dashboard',            icon: LayoutDashboard,   label: 'Dashboard',   desc: 'Overview' },
   { href: '/dashboard/inbox',      icon: Inbox,             label: 'Inbox',       desc: 'Emails' },
+  { href: '/dashboard/upload',     icon: UploadCloud,       label: 'Upload CVs',  desc: 'Drag & Drop' },
   { href: '/dashboard/review',     icon: UserCheck,         label: 'Selected',    desc: 'Review CVs' },
   { href: '/dashboard/selected',   icon: Anchor,            label: 'Onboard',     desc: 'Onboarded' },
   { href: '/dashboard/unselected', icon: UserX,             label: 'Unselected',  desc: 'Rejected' },
   { href: '/dashboard/config',     icon: SlidersHorizontal, label: 'Rank Config', desc: 'Criteria' },
   { href: '/dashboard/settings',   icon: Settings,          label: 'Settings',    desc: 'System' },
 ];
-
-/* Inline Shipivishta SVG mark (the chevron + waves emblem only) */
-function ShipivishtaMark({ size = 32 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Red chevron / V */}
-      <polygon points="32,6 14,30 22,30 32,14 42,30 50,30" fill="#C0392B" />
-      <polygon points="32,18 24,34 32,28 40,34" fill="#C0392B" />
-      {/* Wave arcs */}
-      <path d="M6 40 Q16 32 26 40 Q36 48 46 40 Q56 32 62 36"
-        stroke="#60a5fa" strokeWidth="3" strokeLinecap="round" fill="none"/>
-      <path d="M2 52 Q14 44 24 52 Q34 60 44 52 Q54 44 62 48"
-        stroke="#93c5fd" strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.7"/>
-    </svg>
-  );
-}
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
@@ -71,9 +57,16 @@ export function Sidebar() {
       >
         {/* Emblem */}
         <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl overflow-hidden"
-          style={{ background: 'linear-gradient(135deg,#0d254a 0%,#163863 100%)', boxShadow: '0 0 0 1px rgba(255,255,255,0.1)' }}
+          style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.1)' }}
         >
-          <ShipivishtaMark size={34} />
+          <Image
+            src="/logo-mark.svg"
+            alt="Shipivishta"
+            width={40}
+            height={40}
+            className="rounded-xl"
+            priority
+          />
         </div>
 
         {/* Brand text */}

@@ -4,25 +4,10 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
+import Image from 'next/image';
 import { Mail, Lock, LogIn, Anchor, Ship } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import toast from 'react-hot-toast';
-
-/* ── Shipivishta inline SVG logo ── */
-function ShipivishtaLogo({ size = 72 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Red chevron */}
-      <polygon points="32,6 14,30 22,30 32,14 42,30 50,30" fill="#C0392B" />
-      <polygon points="32,18 24,34 32,28 40,34" fill="#C0392B" />
-      {/* Wave arcs */}
-      <path d="M4 42 Q16 34 28 42 Q40 50 52 42 Q58 38 62 39"
-        stroke="#60a5fa" strokeWidth="3.5" strokeLinecap="round" fill="none"/>
-      <path d="M2 54 Q14 46 26 54 Q38 62 50 54 Q58 50 62 52"
-        stroke="#93c5fd" strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.6"/>
-    </svg>
-  );
-}
 
 /* ── Animated wave divider ── */
 function WaveDivider() {
@@ -106,14 +91,17 @@ export default function LoginPage() {
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: 0.6, delay: 0.1 }}
-            className="inline-flex items-center justify-center h-24 w-24 rounded-3xl mb-8"
-            style={{
-              background: 'linear-gradient(135deg, rgba(37,99,235,0.15) 0%, rgba(13,37,74,0.4) 100%)',
-              border: '1px solid rgba(96,165,250,0.2)',
-              boxShadow: '0 0 40px rgba(37,99,235,0.15)',
-            }}
+            className="inline-flex items-center justify-center mb-8"
+            style={{ filter: 'drop-shadow(0 0 32px rgba(37,99,235,0.25))' }}
           >
-            <ShipivishtaLogo size={64} />
+            <Image
+              src="/logo-mark.svg"
+              alt="Shipivishta"
+              width={96}
+              height={96}
+              className="rounded-3xl"
+              priority
+            />
           </motion.div>
 
           {/* Brand name */}
@@ -169,9 +157,9 @@ export default function LoginPage() {
         >
           {/* Mobile logo */}
           <div className="flex lg:hidden items-center gap-3 mb-8">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl"
-              style={{ background: 'linear-gradient(135deg, #071730 0%, #163863 100%)', boxShadow: '0 4px 16px rgba(7,23,48,0.3)' }}>
-              <ShipivishtaLogo size={40} />
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl overflow-hidden"
+              style={{ boxShadow: '0 4px 16px rgba(7,23,48,0.3)' }}>
+              <Image src="/logo-mark.svg" alt="Shipivishta" width={48} height={48} className="rounded-2xl" />
             </div>
             <div>
               <p className="text-lg font-bold text-navy-900" style={{ fontFamily: 'Georgia, serif' }}>Shipivishta</p>
