@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, RefreshCw, CheckCircle2, XCircle, AlertCircle,
-  ChevronDown, ChevronUp, Square,
+  ChevronDown, ChevronUp, Square, X,
 } from 'lucide-react';
 import { useProcessing, fmtSync } from '@/lib/contexts/processing-context';
 import { cn } from '@/lib/utils/helpers';
@@ -39,8 +39,18 @@ function ShimmerBar() {
 
 // ══════════════════════════════════════════════════════════════
 export function AutoProcessBar() {
-  const { phase, jobs, summary, error, lastSync, total, done, currentSubject, run, stop } = useProcessing();
+  const { phase, jobs, summary, error, lastSync, total, done, currentSubject, run, stop, dismiss } = useProcessing();
   const [expanded, setExpanded] = useState(false);
+
+  const newAdded  = summary?.added ?? 0;
+
+  // Auto-dismiss after 8s when done and nothing new was found
+  useEffect(() => {
+    if (phase === 'done' && newAdded === 0) {
+      const id = setTimeout(() => dismiss(), 8000);
+      return () => clearTimeout(id);
+    }
+  }, [phase, newAdded, dismiss]);
 
   // Don't render at all when idle (before first run)
   if (phase === 'idle') return null;
@@ -48,7 +58,6 @@ export function AutoProcessBar() {
   const isActive  = phase === 'scanning' || phase === 'processing';
   const isDone    = phase === 'done';
   const isError   = phase === 'error';
-  const newAdded  = summary?.added ?? 0;
 
   // Colour scheme per phase
   const gradients = {
@@ -140,6 +149,17 @@ export function AutoProcessBar() {
                     >
                       <RefreshCw className="h-2.5 w-2.5" />
                       {isError ? 'Retry' : 'Run Again'}
+                    </button>
+                  )}
+
+                  {/* Dismiss (✕) — always shown when done or error */}
+                  {(isDone || isError) && (
+                    <button
+                      onClick={dismiss}
+                      className="rounded-md bg-white/15 hover:bg-white/30 active:bg-white/40 p-1 text-white transition-colors"
+                      title="Dismiss"
+                    >
+                      <X className="h-3 w-3" />
                     </button>
                   )}
 

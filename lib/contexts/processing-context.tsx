@@ -62,8 +62,9 @@ interface ProcessingContextValue {
   done:     number;
   /** Currently-processing email subject */
   currentSubject: string | null;
-  run:  () => void;
-  stop: () => void;
+  run:     () => void;
+  stop:    () => void;
+  dismiss: () => void;
 }
 
 const Ctx = createContext<ProcessingContextValue | null>(null);
@@ -160,12 +161,21 @@ export function ProcessingProvider({ children, onComplete }: Props) {
 
     const result = { added, skipped, errors };
     setSummary(result);
-    setPhase('done');
+    // Always notify so stats/candidates refresh — even when user stopped mid-run
     onComplete?.(added);
+    // Only show the 'done' banner if we weren't aborted (stop() already set phase to 'idle')
+    if (!abortRef.current) {
+      setPhase('done');
+    }
   }, [onComplete]);
 
   const stop = useCallback(() => {
     abortRef.current = true;
+    setPhase('idle');   // immediately clear the bar — don't wait for in-flight request
+  }, []);
+
+  const dismiss = useCallback(() => {
+    setPhase('idle');
   }, []);
 
   // ── Auto-run once on layout mount ──
@@ -179,7 +189,7 @@ export function ProcessingProvider({ children, onComplete }: Props) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ phase, jobs, summary, error, lastSync, total, done, currentSubject, run, stop }}>
+    <Ctx.Provider value={{ phase, jobs, summary, error, lastSync, total, done, currentSubject, run, stop, dismiss }}>
       {children}
     </Ctx.Provider>
   );

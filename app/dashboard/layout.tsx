@@ -76,11 +76,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { refetch: refetchStats }      = useStats();
   const { refetch: refetchCandidates } = useCandidates();
 
-  const handleComplete = useCallback((added: number) => {
-    if (added > 0) {
-      refetchStats();
-      refetchCandidates();
-    }
+  // Always refresh stats after any processing run so counts are never stale.
+  // Use `added` to suppress the unused-var warning while keeping it available.
+  const handleComplete = useCallback((_added: number) => {
+    refetchStats();
+    refetchCandidates();
   }, [refetchStats, refetchCandidates]);
 
   return (

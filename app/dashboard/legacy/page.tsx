@@ -53,7 +53,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 // ── Import progress state ─────────────────────────────────────
 interface ImportProgress {
-  phase:          'reading' | 'importing' | 'done' | 'error';
+  phase:          'reading' | 'importing' | 'stopping' | 'stopped' | 'done' | 'error';
   totalRecords:   number;   // total in JSON
   totalBatches:   number;
   batchDone:      number;   // batches completed
@@ -236,8 +236,14 @@ export default function LegacyPage() {
       } : null);
     }
 
-    // 3. Done — refresh the list
-    setProgress(p => p ? { ...p, phase: 'done', imported: totalImported, skipped: totalSkipped } : null);
+    // 3. Done (or stopped) — refresh the list
+    const wasStopped = abortRef.current;
+    setProgress(p => p ? {
+      ...p,
+      phase:    wasStopped ? 'stopped' : 'done',
+      imported: totalImported,
+      skipped:  totalSkipped,
+    } : null);
     setCursorStack([null]);
     setCurrentPage(0);
     fetchPage(null, activeSearch);
@@ -273,7 +279,7 @@ export default function LegacyPage() {
   const to      = currentPage * PAGE_LIMIT + showing;
   const records = pageData?.records ?? [];
 
-  const isImporting = progress?.phase === 'importing' || progress?.phase === 'reading';
+  const isImporting = progress?.phase === 'importing' || progress?.phase === 'reading' || progress?.phase === 'stopping';
   const pct = progress && progress.totalBatches > 0
     ? Math.round((progress.batchDone / progress.totalBatches) * 100)
     : 0;
@@ -342,16 +348,18 @@ export default function LegacyPage() {
             </div>
           )}
 
-          {/* ── Importing phase ── */}
-          {progress?.phase === 'importing' && (
+          {/* ── Importing / Stopping phase ── */}
+          {(progress?.phase === 'importing' || progress?.phase === 'stopping') && (
             <div className="p-5 space-y-3">
               {/* Header row */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <FileJson className="h-5 w-5 text-primary-500 shrink-0" />
+                  <FileJson className={cn('h-5 w-5 shrink-0', progress.phase === 'stopping' ? 'text-amber-500' : 'text-primary-500')} />
                   <div>
                     <p className="text-sm font-bold text-slate-800">
-                      Importing — batch {progress.batchDone} of {progress.totalBatches}
+                      {progress.phase === 'stopping'
+                        ? 'Stopping — finishing current batch…'
+                        : `Importing — batch ${progress.batchDone} of ${progress.totalBatches}`}
                     </p>
                     <p className="text-[11px] text-slate-400 mt-0.5 truncate max-w-xs">
                       {progress.fileName} · {progress.totalRecords.toLocaleString()} records
@@ -359,15 +367,20 @@ export default function LegacyPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3 text-xs text-slate-500 shrink-0">
-                  <span className="font-semibold text-primary-600">{pct}%</span>
+                  <span className={cn('font-semibold', progress.phase === 'stopping' ? 'text-amber-500' : 'text-primary-600')}>{pct}%</span>
                   <span className="text-slate-300">|</span>
                   <ElapsedTimer startedAt={progress.startedAt} />
-                  <button
-                    onClick={() => { abortRef.current = true; }}
-                    className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
-                  >
-                    Stop
-                  </button>
+                  {progress.phase !== 'stopping' && (
+                    <button
+                      onClick={() => {
+                        abortRef.current = true;
+                        setProgress(p => p ? { ...p, phase: 'stopping' } : null);
+                      }}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
+                    >
+                      Stop
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -411,6 +424,49 @@ export default function LegacyPage() {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Stopped phase ── */}
+          {progress?.phase === 'stopped' && (
+            <div className="p-5">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-50">
+                  <XCircle className="h-6 w-6 text-amber-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-slate-800">Import stopped</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{progress.fileName}</p>
+                  <div className="flex items-center gap-4 mt-3">
+                    <span className="text-sm font-semibold text-slate-700">
+                      {progress.batchDone} of {progress.totalBatches} batches completed
+                      ({progress.recordsDone.toLocaleString()} records)
+                    </span>
+                    {progress.imported > 0 && (
+                      <span className="text-sm font-medium text-emerald-600">
+                        ✓ {progress.imported.toLocaleString()} saved
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2 shrink-0">
+                  <button
+                    onClick={() => { setProgress(null); fileInput.current?.click(); }}
+                    className="rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 transition-colors"
+                  >
+                    Start Over
+                  </button>
+                  <button
+                    onClick={() => setProgress(null)}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4">
+                <ProgressBar pct={pct} />
+              </div>
             </div>
           )}
 
