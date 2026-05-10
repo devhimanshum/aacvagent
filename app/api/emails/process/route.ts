@@ -95,75 +95,34 @@ function checkRankMatch(
   return { rankMatched: metCount > 0, rankMatchScore: score };
 }
 
-async function processEmail(
-  emailId: string,
+/**
+ * Process a single CV attachment: extract text → AI → duplicate check → save.
+ * Returns a ProcessEmailResult for this specific attachment.
+ */
+async function processSingleAttachment(
+  emailId:      string,
   emailSubject: string,
-  senderEmail: string,
-  senderName: string,
-  receivedAt: string,
-  rankConfig?: RankConfig | null,
-): Promise<ProcessEmailResult> {
-  // Skip already-processed
-  if (await adminIsEmailProcessed(emailId)) {
-    return { emailId, status: 'skipped', message: 'Already processed' };
-  }
-
-  // Early duplicate check by sender email (saves download + AI tokens)
-  if (senderEmail) {
-    const earlyDup = await adminCheckDuplicate(senderEmail);
-    if (earlyDup) {
-      await adminSaveProcessedEmail({
-        outlookId: emailId, subject: emailSubject, senderName, senderEmail,
-        receivedAt, processedAt: new Date().toISOString(),
-        status: 'skipped',
-        errorMessage: `Duplicate — sender "${senderEmail}" already has a candidate record`,
-      });
-      console.log(`[Process] Early duplicate rejected by sender: ${senderEmail}`);
-      return {
-        emailId,
-        status: 'skipped',
-        message: `Duplicate — ${senderName || senderEmail} already exists`,
-      };
-    }
-  }
-
-  // Find a CV attachment
-  const attachments  = await fetchEmailAttachments(emailId);
-  const cvAttachment = attachments.find(a => isSupportedCVFile(a.contentType, a.name));
-
-  if (!cvAttachment) {
-    await adminSaveProcessedEmail({
-      outlookId: emailId, subject: emailSubject, senderName, senderEmail,
-      receivedAt, processedAt: new Date().toISOString(),
-      status: 'skipped', errorMessage: 'No PDF/DOCX attachment found',
-    });
-    return { emailId, status: 'skipped', message: 'No CV attachment found' };
-  }
-
+  senderEmail:  string,
+  senderName:   string,
+  receivedAt:   string,
+  attachmentId: string,
+  fileName:     string,
+  rankConfig:   RankConfig | null,
+): Promise<ProcessEmailResult & { name?: string }> {
   // Download & extract text
-  const { buffer, contentType, name } = await downloadAttachment(emailId, cvAttachment.id);
-  const cvText = await extractCVText(buffer, contentType, name);
+  const { buffer, contentType, name } = await downloadAttachment(emailId, attachmentId);
+  const cvText = await extractCVText(buffer, contentType, name || fileName);
 
   if (!cvText.trim()) {
-    await adminSaveProcessedEmail({
-      outlookId: emailId, subject: emailSubject, senderName, senderEmail,
-      receivedAt, processedAt: new Date().toISOString(),
-      status: 'error', errorMessage: 'Could not extract text from CV', attachmentName: name,
-    });
-    return { emailId, status: 'error', message: 'CV text extraction failed' };
+    return { emailId, status: 'error', message: `Could not extract text from "${name || fileName}"` };
   }
 
-  // No Firebase Storage — store attachment reference for on-demand fetch
-  const cvFileUrl      = '';             // not using storage
-  const cvAttachmentId = cvAttachment.id; // Outlook attachment ID
-
-  // AI analysis — extracts rank history, personal info, sea service
+  // AI analysis
   const { result: aiResult, usage } = await analyzeCV(cvText);
 
-  // Save token usage record
-  const today = new Date().toISOString().slice(0, 10);
+  // Save token usage
   await adminSaveTokenUsage({
-    date:          today,
+    date:          new Date().toISOString().slice(0, 10),
     candidateName: aiResult.name || 'Unknown',
     emailSubject,
     inputTokens:   usage.inputTokens,
@@ -174,46 +133,37 @@ async function processEmail(
     processedAt:   new Date().toISOString(),
   });
 
-  // ── Duplicate check — reject before saving anything ──────────
-  // If a candidate with the same email already exists in any collection,
-  // mark the email processed (so it is never re-attempted) and skip.
+  // Duplicate check by extracted email
   if (aiResult.email) {
     const isDuplicate = await adminCheckDuplicate(aiResult.email);
     if (isDuplicate) {
-      await adminSaveProcessedEmail({
-        outlookId: emailId, subject: emailSubject, senderName, senderEmail,
-        receivedAt, processedAt: new Date().toISOString(),
-        status: 'skipped',
-        attachmentName: name,
-        errorMessage: `Duplicate — candidate with email "${aiResult.email}" already exists`,
-      });
       console.log(`[Process] Duplicate rejected: ${aiResult.name} <${aiResult.email}>`);
       return {
         emailId,
-        status: 'skipped',
-        message: `Duplicate candidate — ${aiResult.name || aiResult.email} already exists`,
+        status:  'skipped',
+        name:    aiResult.name,
+        message: `Duplicate — ${aiResult.name || aiResult.email} already exists`,
       };
     }
   }
 
   // Rank config matching
-  const { rankMatched, rankMatchScore } = checkRankMatch(aiResult.rankHistory, rankConfig ?? null);
-
+  const { rankMatched, rankMatchScore } = checkRankMatch(aiResult.rankHistory, rankConfig);
   const now = new Date().toISOString();
 
-  // Save candidate to PENDING (awaiting admin review)
   const candidateId = await adminSaveCandidate({
     name:                  aiResult.name,
     email:                 aiResult.email,
-    phone:                 aiResult.phone,
+    phones:                aiResult.phones,
     currentRank:           aiResult.currentRank,
     rankHistory:           aiResult.rankHistory,
     totalSeaServiceMonths: aiResult.totalSeaServiceMonths,
     summary:               aiResult.summary,
     education:             aiResult.education,
-    cvFileUrl,
-    cvFileName:            name,
-    cvAttachmentId,
+    documents:             aiResult.documents,
+    cvFileUrl:             '',
+    cvFileName:            name || fileName,
+    cvAttachmentId:        attachmentId,
     emailId,
     emailSubject,
     senderEmail,
@@ -225,32 +175,113 @@ async function processEmail(
     createdAt:             now,
   });
 
-  await adminSaveProcessedEmail({
-    outlookId: emailId, subject: emailSubject, senderName, senderEmail,
-    receivedAt, processedAt: now,
-    status: 'processed', candidateId, attachmentName: name,
-  });
-
-  // Append to Google Sheet (fire-and-forget — never blocks CV processing)
+  // Append to Google Sheet (fire-and-forget)
   appendCandidateToSheet({
     name:                  aiResult.name,
     email:                 aiResult.email,
-    phone:                 aiResult.phone,
+    phone:                 aiResult.phones[0] ?? '',
     currentRank:           aiResult.currentRank,
     totalSeaServiceMonths: aiResult.totalSeaServiceMonths,
     rankHistory:           aiResult.rankHistory,
     education:             aiResult.education,
     emailSubject,
     senderEmail,
-    cvFileName:            name,
+    cvFileName:            name || fileName,
     reviewStatus:          'pending',
   }).catch((err: unknown) => {
-    const e = err as { code?: number; message?: string; response?: { data?: unknown } };
+    const e = err as { message?: string; response?: { data?: unknown } };
     console.error('[Google Sheet] Append failed for', aiResult.name, '—', e?.message ?? err);
-    if (e?.response?.data) console.error('[Google Sheet] API detail:', JSON.stringify(e.response.data));
   });
 
-  return { emailId, status: 'success', candidateId, message: 'CV analysed and added to Selected' };
+  return {
+    emailId,
+    status:      'success',
+    candidateId,
+    name:        aiResult.name,
+    message:     `${aiResult.name} analysed and saved`,
+  };
+}
+
+async function processEmail(
+  emailId:      string,
+  emailSubject: string,
+  senderEmail:  string,
+  senderName:   string,
+  receivedAt:   string,
+  rankConfig?:  RankConfig | null,
+): Promise<ProcessEmailResult> {
+  // Skip if this email was already fully processed
+  if (await adminIsEmailProcessed(emailId)) {
+    return { emailId, status: 'skipped', message: 'Already processed' };
+  }
+
+  // Find ALL CV attachments in the email
+  const attachments    = await fetchEmailAttachments(emailId);
+  const cvAttachments  = attachments.filter(a => isSupportedCVFile(a.contentType, a.name));
+
+  if (cvAttachments.length === 0) {
+    await adminSaveProcessedEmail({
+      outlookId: emailId, subject: emailSubject, senderName, senderEmail,
+      receivedAt, processedAt: new Date().toISOString(),
+      status: 'skipped', errorMessage: 'No PDF/DOCX attachment found',
+    });
+    return { emailId, status: 'skipped', message: 'No CV attachment found' };
+  }
+
+  // Process every CV attachment
+  const attResults: (ProcessEmailResult & { name?: string })[] = [];
+  for (const att of cvAttachments) {
+    try {
+      const r = await processSingleAttachment(
+        emailId, emailSubject, senderEmail, senderName, receivedAt,
+        att.id, att.name, rankConfig ?? null,
+      );
+      attResults.push(r);
+    } catch (err) {
+      attResults.push({
+        emailId,
+        status:  'error',
+        message: err instanceof Error ? err.message : `Failed to process "${att.name}"`,
+      });
+    }
+  }
+
+  // Mark the email as processed (once, regardless of individual attachment outcomes)
+  const successResult = attResults.find(r => r.status === 'success');
+  const now           = new Date().toISOString();
+  await adminSaveProcessedEmail({
+    outlookId:      emailId,
+    subject:        emailSubject,
+    senderName,
+    senderEmail,
+    receivedAt,
+    processedAt:    now,
+    status:         successResult ? 'processed' : 'skipped',
+    candidateId:    successResult?.candidateId,
+    attachmentName: cvAttachments.map(a => a.name).join(', '),
+    errorMessage:   successResult ? undefined
+      : attResults.map(r => r.message).join('; '),
+  });
+
+  const successCount = attResults.filter(r => r.status === 'success').length;
+  const skipCount    = attResults.filter(r => r.status === 'skipped').length;
+  const errCount     = attResults.filter(r => r.status === 'error').length;
+
+  if (successCount > 0) {
+    const names = attResults.filter(r => r.status === 'success').map(r => r.name).filter(Boolean).join(', ');
+    return {
+      emailId,
+      status:      'success',
+      candidateId: successResult?.candidateId,
+      message:     `${successCount} CV${successCount > 1 ? 's' : ''} processed${names ? ` (${names})` : ''}${skipCount ? `, ${skipCount} duplicate${skipCount > 1 ? 's' : ''} skipped` : ''}`,
+    };
+  }
+
+  if (skipCount === attResults.length) {
+    return { emailId, status: 'skipped', message: `All ${skipCount} CVs are duplicates — skipped` };
+  }
+
+  return { emailId, status: 'error', message: `${errCount} error${errCount > 1 ? 's' : ''} processing CVs` };
 }
 
 export async function POST(req: NextRequest) {

@@ -146,11 +146,11 @@ export function CandidatesPage({ decision, title, subtitle, hideMailButton }: Ca
 
           {/* ── Content ── */}
           {loading ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4">
               {Array(6).fill(0).map((_, i) => <CardSkeleton key={i} />)}
             </div>
           ) : filtered.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4">
               {filtered.map((c, i) => (
                 <div
                   key={c.id}

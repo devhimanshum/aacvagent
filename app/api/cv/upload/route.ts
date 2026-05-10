@@ -141,12 +141,13 @@ export async function POST(req: NextRequest) {
     const candidateId = await adminSaveCandidate({
       name:                  aiResult.name,
       email:                 aiResult.email,
-      phone:                 aiResult.phone,
+      phones:                aiResult.phones,
       currentRank:           aiResult.currentRank,
       rankHistory:           aiResult.rankHistory,
       totalSeaServiceMonths: aiResult.totalSeaServiceMonths,
       summary:               aiResult.summary,
       education:             aiResult.education,
+      documents:             aiResult.documents,
       cvFileUrl:             '',
       cvFileName:            fileName,
       cvAttachmentId:        '',        // no Outlook attachment for uploads
@@ -165,7 +166,7 @@ export async function POST(req: NextRequest) {
     appendCandidateToSheet({
       name:                  aiResult.name,
       email:                 aiResult.email,
-      phone:                 aiResult.phone,
+      phone:                 aiResult.phones[0] ?? '',
       currentRank:           aiResult.currentRank,
       totalSeaServiceMonths: aiResult.totalSeaServiceMonths,
       rankHistory:           aiResult.rankHistory,

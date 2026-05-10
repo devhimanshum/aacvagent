@@ -97,21 +97,23 @@ export function PhoneLink({ phone, size = 'xs', className }: PhoneLinkProps) {
   );
 }
 
-// ── ContactRow — email + phone side by side ───────────────────
+// ── ContactRow — email + phones side by side ─────────────────
 interface ContactRowProps {
   email?:     string;
-  phone?:     string;
+  phone?:     string;        // legacy (backward-compat)
+  phones?:    string[];      // up to 2 phones
   size?:      keyof typeof sizes;
   className?: string;
   truncate?:  boolean;
 }
 
-export function ContactRow({ email, phone, size = 'xs', className, truncate }: ContactRowProps) {
-  if (!email && !phone) return null;
+export function ContactRow({ email, phone, phones, size = 'xs', className, truncate }: ContactRowProps) {
+  const phoneList = phones?.length ? phones : phone ? [phone] : [];
+  if (!email && phoneList.length === 0) return null;
   return (
     <div className={cn('flex flex-wrap items-center gap-x-2 gap-y-1', className)}>
       {email && <EmailLink email={email} size={size} truncate={truncate} />}
-      {phone && <PhoneLink phone={phone} size={size} />}
+      {phoneList.map((p, i) => <PhoneLink key={i} phone={p} size={size} />)}
     </div>
   );
 }

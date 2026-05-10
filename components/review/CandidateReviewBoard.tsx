@@ -6,7 +6,7 @@ import {
   UserCheck, UserX, RefreshCw, Mail,
   Anchor, Clock, BookOpen, AlertCircle,
   CheckCircle2, ClipboardList, ChevronDown, ChevronUp,
-  CheckSquare, Square, Zap, MessageSquare,
+  CheckSquare, Square, Zap, MessageSquare, ShieldCheck,
 } from 'lucide-react';
 import { EmailLink, PhoneLink } from '@/components/ui/ContactLink';
 import { CVPreviewButton } from '@/components/ui/CVPreviewButton';
@@ -211,7 +211,8 @@ function CandidateCard({
 
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">
             {candidate.email && <EmailLink email={candidate.email} size="sm" truncate />}
-            {candidate.phone && <PhoneLink phone={candidate.phone} size="sm" />}
+            {(candidate.phones?.length ? candidate.phones : candidate.phone ? [candidate.phone] : [])
+              .map((p, i) => <PhoneLink key={i} phone={p} size="sm" />)}
           </div>
 
           <div className="flex flex-wrap items-center gap-x-4 mt-1">
@@ -238,6 +239,29 @@ function CandidateCard({
         <div className="mx-5 mb-3 flex items-start gap-2">
           <BookOpen className="h-3.5 w-3.5 text-slate-400 shrink-0 mt-0.5" />
           <p className="text-xs text-slate-600">{candidate.education}</p>
+        </div>
+      )}
+
+      {/* ── Documents (Passport / CDC / COC / COP) ── */}
+      {candidate.documents && Object.keys(candidate.documents).length > 0 && (
+        <div className="mx-5 mb-3 rounded-xl border border-slate-100 bg-slate-50/60 overflow-hidden">
+          <div className="px-3 py-1.5 bg-slate-100/70 flex items-center gap-1.5">
+            <ShieldCheck className="h-3 w-3 text-slate-400" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Documents</span>
+          </div>
+          {(Object.entries(candidate.documents) as [string, { number: string; issueDate: string; expiryDate: string; placeOfIssue: string }][]).map(([key, doc]) => (
+            <div key={key} className="grid grid-cols-4 px-3 py-2 border-t border-slate-100 items-center">
+              <span className="text-[11px] font-bold text-slate-700">{key.toUpperCase()}</span>
+              <span className="text-[11px] font-mono text-slate-600">{doc.number || '—'}</span>
+              <span className="text-[11px] text-slate-500">{doc.issueDate || '—'}</span>
+              <div>
+                <span className={cn('text-[11px] block font-medium', (doc.expiryDate === 'LIFE TIME' || doc.expiryDate === 'N/A') ? 'text-emerald-600' : 'text-slate-600')}>
+                  {doc.expiryDate || '—'}
+                </span>
+                {doc.placeOfIssue && <span className="text-[10px] text-slate-400">{doc.placeOfIssue}</span>}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

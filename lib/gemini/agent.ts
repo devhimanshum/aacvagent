@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { MaritimeAIResult, RankEntry } from '@/types';
+import type { MaritimeAIResult, MaritimeDocument, RankEntry } from '@/types';
 import { withRetry } from '@/lib/utils/helpers';
 import { getOpenAISettings } from '@/lib/firebase/integration-settings';
 
@@ -84,13 +84,21 @@ ${cvText.substring(0, 12000)}
 - Extract ALL sea-service entries from the CV — do not skip any.
 - Education: include CoC grade, STCW certificates, flag state endorsements.
 - Summary: 2–3 sentences focusing on rank, experience, vessel types.
+- Phones: extract up to 2 phone/mobile numbers from the CV. Return as an array of strings. If none, return [].
+- Documents: look for a documents / certificates table in the CV and extract:
+  • PASSPORT — the seafarer's travel passport
+  • CDC — Continuous Discharge Certificate (also written as C.D.C., C.D.C. INDIAN, INDIAN CDC, Indian C.D.C.)
+  • COC — Certificate of Competency
+  • COP — Certificate of Proficiency
+  For each document found, extract: number, issueDate, expiryDate (use "LIFE TIME" or "N/A" as-is if that is what the CV says), placeOfIssue.
+  If a document is not present in the CV, omit its key entirely.
 
 Respond ONLY with a valid JSON object — no markdown, no code fences, no explanation:
 
 {
   "name": "Full Name",
   "email": "email@example.com",
-  "phone": "+1234567890",
+  "phones": ["+919876543210", "+917012345678"],
   "currentRank": "Chief Engineer",
   "rankHistory": [
     {
@@ -114,7 +122,13 @@ Respond ONLY with a valid JSON object — no markdown, no code fences, no explan
   ],
   "totalSeaServiceMonths": 63,
   "education": "B.Sc Marine Engineering, CoC Class 1 MEO, STCW Basic Safety Training",
-  "summary": "Experienced Chief Engineer with 5+ years on tankers and bulk carriers."
+  "summary": "Experienced Chief Engineer with 5+ years on tankers and bulk carriers.",
+  "documents": {
+    "passport": { "number": "W5419757", "issueDate": "29.12.2022", "expiryDate": "28.12.2032", "placeOfIssue": "JAIPUR" },
+    "cdc":      { "number": "MUM155109", "issueDate": "12.11.2020", "expiryDate": "11.11.2030", "placeOfIssue": "MUMBAI" },
+    "coc":      { "number": "CC/MUM/2651", "issueDate": "18.08.2017", "expiryDate": "LIFE TIME", "placeOfIssue": "MUMBAI" },
+    "cop":      { "number": "ABE26009540", "issueDate": "26.02.2026", "expiryDate": "N/A", "placeOfIssue": "MUMBAI" }
+  }
 }`;
 }
 
@@ -130,6 +144,17 @@ function safeRankEntry(r: Partial<RankEntry>): RankEntry {
   };
 }
 
+function safeDoc(raw: unknown): MaritimeDocument | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const d = raw as Record<string, unknown>;
+  return {
+    number:       String(d.number       || '').trim(),
+    issueDate:    String(d.issueDate    || '').trim(),
+    expiryDate:   String(d.expiryDate   || '').trim(),
+    placeOfIssue: String(d.placeOfIssue || '').trim(),
+  };
+}
+
 function parseResponse(raw: string): MaritimeAIResult {
   const cleaned = raw.trim()
     .replace(/^```json\s*/i, '')
@@ -142,22 +167,41 @@ function parseResponse(raw: string): MaritimeAIResult {
     ? (parsed.rankHistory as Partial<RankEntry>[]).map(safeRankEntry).filter(r => r.rank)
     : [];
 
-  // Recalculate totalSeaServiceMonths as the sum of all individual entries.
-  // This overrides whatever the AI returned if the AI made an arithmetic mistake.
-  const summedMonths = rankHistory.reduce((acc, r) => acc + (r.durationMonths ?? 0), 0);
-  const aiTotal      = Number(parsed.totalSeaServiceMonths) || 0;
-  // Use the larger of the two (AI sometimes has a valid total when entries are partial)
+  // Recalculate totalSeaServiceMonths from individual entries (overrides AI arithmetic).
+  const summedMonths          = rankHistory.reduce((acc, r) => acc + (r.durationMonths ?? 0), 0);
+  const aiTotal               = Number(parsed.totalSeaServiceMonths) || 0;
   const totalSeaServiceMonths = Math.max(summedMonths, aiTotal);
+
+  // Phones — accept array or legacy single string
+  let phones: string[] = [];
+  if (Array.isArray(parsed.phones)) {
+    phones = (parsed.phones as unknown[])
+      .map(p => String(p || '').trim())
+      .filter(Boolean)
+      .slice(0, 2);
+  } else if (parsed.phone) {
+    phones = [String(parsed.phone).trim()].filter(Boolean);
+  }
+
+  // Documents
+  const rawDocs = parsed.documents ?? {};
+  const documents = {
+    ...(safeDoc(rawDocs.passport) ? { passport: safeDoc(rawDocs.passport)! } : {}),
+    ...(safeDoc(rawDocs.cdc)      ? { cdc:      safeDoc(rawDocs.cdc)!      } : {}),
+    ...(safeDoc(rawDocs.coc)      ? { coc:      safeDoc(rawDocs.coc)!      } : {}),
+    ...(safeDoc(rawDocs.cop)      ? { cop:      safeDoc(rawDocs.cop)!      } : {}),
+  };
 
   return {
     name:                  String(parsed.name || 'Unknown').trim(),
     email:                 String(parsed.email || '').trim().toLowerCase(),
-    phone:                 String(parsed.phone || '').trim(),
+    phones,
     currentRank:           String(parsed.currentRank || rankHistory[0]?.rank || '').trim(),
     rankHistory,
     totalSeaServiceMonths,
     education:             String(parsed.education || 'Not specified').trim(),
     summary:               String(parsed.summary || '').trim(),
+    documents,
   };
 }
 

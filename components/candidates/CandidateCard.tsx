@@ -5,13 +5,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Anchor, Clock, BookOpen,
   ChevronDown, ChevronUp,
-  ClipboardList, Zap,
+  ClipboardList, Zap, FileText, ShieldCheck,
 } from 'lucide-react';
 import { CVPreviewButton } from '@/components/ui/CVPreviewButton';
 import { Badge } from '@/components/ui/Badge';
 import { ContactRow } from '@/components/ui/ContactLink';
 import { cn, formatDate } from '@/lib/utils/helpers';
-import type { Candidate, RankEntry, RankRequirement } from '@/types';
+import type { Candidate, MaritimeDocuments, RankEntry, RankRequirement } from '@/types';
 
 // ── Avatar ────────────────────────────────────────────────────
 const AVATAR_COLORS = [
@@ -149,6 +149,55 @@ function RankHistoryRow({ entry }: { entry: RankEntry }) {
   );
 }
 
+// ── Documents section (Passport / CDC / COC / COP) ───────────
+const DOC_LABELS: Record<string, string> = {
+  passport: 'Passport',
+  cdc:      'CDC',
+  coc:      'COC',
+  cop:      'COP',
+};
+
+function DocumentsSection({ documents }: { documents: MaritimeDocuments }) {
+  const entries = Object.entries(documents) as [keyof MaritimeDocuments, NonNullable<MaritimeDocuments[keyof MaritimeDocuments]>][];
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="pt-2 space-y-1.5">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
+        <ShieldCheck className="h-3 w-3" /> Documents
+      </p>
+      <div className="rounded-xl border border-slate-100 bg-slate-50/60 divide-y divide-slate-100 overflow-hidden">
+        {/* Header */}
+        <div className="grid grid-cols-4 px-3 py-1.5 bg-slate-100/70">
+          {['Document', 'Number', 'Issue Date', 'Expiry / Place'].map(h => (
+            <span key={h} className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{h}</span>
+          ))}
+        </div>
+        {entries.map(([key, doc]) => (
+          <div key={key} className="grid grid-cols-4 px-3 py-2 items-center">
+            <span className="text-[11px] font-bold text-slate-700">{DOC_LABELS[key] ?? key.toUpperCase()}</span>
+            <span className="text-[11px] font-mono text-slate-600">{doc.number || '—'}</span>
+            <span className="text-[11px] text-slate-500">{doc.issueDate || '—'}</span>
+            <div>
+              <span className={cn(
+                'text-[11px] block font-medium',
+                doc.expiryDate === 'LIFE TIME' || doc.expiryDate === 'N/A'
+                  ? 'text-emerald-600'
+                  : 'text-slate-600',
+              )}>
+                {doc.expiryDate || '—'}
+              </span>
+              {doc.placeOfIssue && (
+                <span className="text-[10px] text-slate-400">{doc.placeOfIssue}</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
 interface CandidateCardProps {
   candidate:  Candidate;
@@ -216,7 +265,7 @@ export function CandidateCard({ candidate, index = 0, rankConfig }: CandidateCar
           {/* Contact */}
           <ContactRow
             email={candidate.email}
-            phone={candidate.phone}
+            phones={candidate.phones?.length ? candidate.phones : candidate.phone ? [candidate.phone] : []}
             size="xs"
             truncate
             className="mt-2"
@@ -293,6 +342,11 @@ export function CandidateCard({ candidate, index = 0, rankConfig }: CandidateCar
                   <BookOpen className="h-3.5 w-3.5 text-slate-400 shrink-0 mt-0.5" />
                   <p className="text-xs text-slate-600">{candidate.education}</p>
                 </div>
+              )}
+
+              {/* Documents */}
+              {candidate.documents && Object.keys(candidate.documents).length > 0 && (
+                <DocumentsSection documents={candidate.documents} />
               )}
             </div>
           </motion.div>

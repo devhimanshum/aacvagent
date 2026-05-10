@@ -30,16 +30,32 @@ export interface RankEntry {
   isPresentRole?: boolean;
 }
 
+// ── Maritime document (Passport / CDC / COC / COP) ───────────
+export interface MaritimeDocument {
+  number:       string;  // document / licence number
+  issueDate:    string;  // "DD/MM/YYYY" or "Month YYYY" or empty
+  expiryDate:   string;  // same, or "LIFE TIME" / "N/A"
+  placeOfIssue: string;
+}
+
+export interface MaritimeDocuments {
+  passport?: MaritimeDocument;
+  cdc?:      MaritimeDocument;  // C.D.C. / Continuous Discharge Certificate
+  coc?:      MaritimeDocument;  // Certificate of Competency
+  cop?:      MaritimeDocument;  // Certificate of Proficiency
+}
+
 // ── AI extraction result (maritime) ─────────────────────────
 export interface MaritimeAIResult {
-  name: string;
-  email: string;
-  phone: string;
-  currentRank: string;
-  rankHistory: RankEntry[];
+  name:                  string;
+  email:                 string;
+  phones:                string[];   // up to 2 numbers
+  currentRank:           string;
+  rankHistory:           RankEntry[];
   totalSeaServiceMonths: number;
-  education: string;
-  summary: string;
+  education:             string;
+  summary:               string;
+  documents:             MaritimeDocuments;
 }
 
 // ── Legacy AI result (kept for backward compat) ──────────────
@@ -59,9 +75,10 @@ export interface CandidateAIResult {
 export interface Candidate {
   id: string;
   // identity
-  name: string;
-  email: string;
-  phone: string;
+  name:   string;
+  email:  string;
+  phones: string[];    // up to 2 numbers (replaces legacy `phone`)
+  phone?: string;      // legacy field — kept for backward-compat reads only
   // maritime specifics
   currentRank: string;
   rankHistory: RankEntry[];
@@ -76,6 +93,8 @@ export interface Candidate {
   emailId: string;
   emailSubject: string;
   senderEmail: string;
+  // maritime documents (Passport / CDC / COC / COP)
+  documents?: MaritimeDocuments;
   // review workflow
   reviewStatus: ReviewStatus;
   reviewedAt?: string;
