@@ -67,9 +67,9 @@ export async function POST(req: NextRequest) {
       .filter((r): r is Record<string, unknown> => r !== null && typeof r === 'object')
       .map(buildRecord);
 
-    const imported = await adminImportLegacyCvs(cleaned);
+    const { imported, skipped } = await adminImportLegacyCvs(cleaned);
 
-    return NextResponse.json({ success: true, imported });
+    return NextResponse.json({ success: true, imported, skipped });
   } catch (err) {
     console.error('[legacy-cv POST]', err);
     return NextResponse.json({ success: false, error: 'Import failed' }, { status: 500 });
@@ -85,8 +85,9 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const limit   = Math.min(parseInt(searchParams.get('limit') ?? '50', 10) || 50, 200);
     const afterId = searchParams.get('afterId') ?? undefined;
+    const search  = searchParams.get('search') ?? undefined;
 
-    const data = await adminGetLegacyCvsPaged(limit, afterId);
+    const data = await adminGetLegacyCvsPaged(limit, afterId, search);
 
     return NextResponse.json({ success: true, data });
   } catch (err) {

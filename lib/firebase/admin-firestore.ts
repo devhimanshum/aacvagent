@@ -240,37 +240,95 @@ export async function adminGetDailyUsageSummary(days = 30): Promise<DailyUsageSu
 }
 
 // ── Legacy CV import ──────────────────────────────────────────
-export async function adminImportLegacyCvs(records: Omit<LegacyCv, 'id'>[]): Promise<number> {
-  const db        = adminDb();
-  const CHUNK     = 499;
-  let   totalSaved = 0;
 
-  for (let i = 0; i < records.length; i += CHUNK) {
-    const chunk = records.slice(i, i + CHUNK);
-    const batch = db.batch();
-    for (const rec of chunk) {
-      const ref = db.collection(C.LEGACY_CVS).doc();
-      batch.set(ref, { ...rec, createdAt: new Date().toISOString() });
-    }
-    await batch.commit();
-    totalSaved += chunk.length;
+/** Split array into chunks of at most `size` elements */
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+export async function adminImportLegacyCvs(
+  records: Omit<LegacyCv, 'id'>[],
+): Promise<{ imported: number; skipped: number }> {
+  const db  = adminDb();
+  const col = db.collection(C.LEGACY_CVS);
+
+  // ── 1. Collect unique incoming keys ──────────────────────────
+  const incomingEmails    = Array.from(new Set(records.map(r => r.email).filter(Boolean)));
+  const incomingNameKeys  = Array.from(new Set(records.map(r => r.name.toLowerCase().trim()).filter(Boolean)));
+
+  const existingEmails    = new Set<string>();
+  const existingNameKeys  = new Set<string>();
+
+  // Check existing emails in batches of 30 (Firestore 'in' limit)
+  for (const chunk of chunkArray(incomingEmails, 30)) {
+    const snap = await col.where('email', 'in', chunk).select('email').get();
+    snap.docs.forEach(d => { const e = d.get('email') as string; if (e) existingEmails.add(e); });
   }
 
-  return totalSaved;
+  // Check existing name keys in batches of 30
+  for (const chunk of chunkArray(incomingNameKeys, 30)) {
+    const snap = await col.where('nameLower', 'in', chunk).select('nameLower').get();
+    snap.docs.forEach(d => { const n = d.get('nameLower') as string; if (n) existingNameKeys.add(n); });
+  }
+
+  // ── 2. Filter duplicates ──────────────────────────────────────
+  const toInsert = records.filter(r => {
+    if (r.email && existingEmails.has(r.email))                          return false;
+    if (r.name  && existingNameKeys.has(r.name.toLowerCase().trim()))    return false;
+    return true;
+  });
+
+  // ── 3. Batch-write new records ────────────────────────────────
+  const CHUNK = 499;
+  let   imported = 0;
+  const now      = new Date().toISOString();
+
+  for (const chunk of chunkArray(toInsert, CHUNK)) {
+    const batch = db.batch();
+    for (const rec of chunk) {
+      const ref = col.doc();
+      batch.set(ref, {
+        ...rec,
+        nameLower: rec.name.toLowerCase().trim(),
+        createdAt: now,
+      });
+    }
+    await batch.commit();
+    imported += chunk.length;
+  }
+
+  return { imported, skipped: records.length - imported };
 }
 
 export async function adminGetLegacyCvsPaged(
   limit: number,
   afterId?: string,
+  search?: string,
 ): Promise<{ records: LegacyCv[]; hasMore: boolean; nextId: string | null; total: number }> {
   const db  = adminDb();
   const col = db.collection(C.LEGACY_CVS);
 
-  // Total count
-  const countSnap = await col.count().get();
+  // Build base query — range on nameLower enables prefix search across all records
+  const q_term = search?.trim().toLowerCase() || '';
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let baseQ: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = col as any;
+  if (q_term) {
+    baseQ = col
+      .where('nameLower', '>=', q_term)
+      .where('nameLower', '<=', q_term + '');
+  }
+
+  // Total count (respects search filter)
+  const countSnap = await baseQ.count().get();
   const total     = countSnap.data().count;
 
-  let q = col.orderBy('createdAt', 'desc').limit(limit + 1);
+  // When searching, sort by name; otherwise newest first
+  let q = q_term
+    ? baseQ.orderBy('nameLower', 'asc').limit(limit + 1)
+    : baseQ.orderBy('createdAt', 'desc').limit(limit + 1);
 
   if (afterId) {
     const cursor = await col.doc(afterId).get();

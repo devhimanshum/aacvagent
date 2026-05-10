@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Archive, Upload, Search, ChevronLeft, ChevronRight,
-  Globe, Users,
+  Globe, Users, SkipForward,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { EmailLink, PhoneLink } from '@/components/ui/ContactLink';
@@ -33,7 +33,7 @@ function rankColor(rank: string): string {
   return 'bg-slate-100 text-slate-700 border-slate-200';
 }
 
-// ── Avatar initials ───────────────────────────────────────────
+// ── Avatar helpers ────────────────────────────────────────────
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
   if (parts.length === 0 || !parts[0]) return '?';
@@ -41,7 +41,6 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// ── Avatar color (deterministic from name) ────────────────────
 const avatarColors = [
   'bg-blue-500', 'bg-indigo-500', 'bg-violet-500', 'bg-emerald-500',
   'bg-teal-500', 'bg-sky-500', 'bg-amber-500', 'bg-rose-500',
@@ -52,47 +51,54 @@ function avatarColor(name: string): string {
   return avatarColors[h];
 }
 
-// ── Page state types ──────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────
 type ImportState = 'idle' | 'importing' | 'done' | 'error';
 
 interface PageData {
-  records:  LegacyCv[];
-  hasMore:  boolean;
-  nextId:   string | null;
-  total:    number;
+  records: LegacyCv[];
+  hasMore: boolean;
+  nextId:  string | null;
+  total:   number;
 }
 
 const PAGE_LIMIT = 50;
 
 // ── Main page ─────────────────────────────────────────────────
 export default function LegacyPage() {
-  const [pageData,      setPageData]      = useState<PageData | null>(null);
-  const [loading,       setLoading]       = useState(false);
-  const [importState,   setImportState]   = useState<ImportState>('idle');
-  const [importCount,   setImportCount]   = useState(0);
-  const [importError,   setImportError]   = useState('');
-  const [isDragging,    setIsDragging]    = useState(false);
-  const [search,        setSearch]        = useState('');
-  const [cursorStack,   setCursorStack]   = useState<Array<string | null>>([null]); // stack of afterId values; index = page index
-  const [currentPage,   setCurrentPage]   = useState(0); // 0-based
+  const [pageData,     setPageData]     = useState<PageData | null>(null);
+  const [loading,      setLoading]      = useState(false);
+  const [importState,  setImportState]  = useState<ImportState>('idle');
+  const [importCount,  setImportCount]  = useState(0);
+  const [importSkip,   setImportSkip]   = useState(0);
+  const [importError,  setImportError]  = useState('');
+  const [isDragging,   setIsDragging]   = useState(false);
 
-  const dragCount = useRef(0);
-  const fileInput = useRef<HTMLInputElement>(null);
+  // Search state
+  const [searchInput,  setSearchInput]  = useState('');   // what user types
+  const [activeSearch, setActiveSearch] = useState('');   // debounced, sent to API
 
-  // ── Fetch page from API ───────────────────────────────────
-  const fetchPage = useCallback(async (afterId: string | null) => {
+  // Pagination — separate stacks per search term so switching query resets to page 1
+  const [cursorStack,  setCursorStack]  = useState<Array<string | null>>([null]);
+  const [currentPage,  setCurrentPage]  = useState(0);
+
+  const dragCount  = useRef(0);
+  const fileInput  = useRef<HTMLInputElement>(null);
+  const debounceId = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Fetch page ────────────────────────────────────────────
+  const fetchPage = useCallback(async (afterId: string | null, search: string) => {
     setLoading(true);
     try {
       const token = await auth.currentUser?.getIdToken() ?? '';
-      const url   = afterId
-        ? `/api/legacy-cv?limit=${PAGE_LIMIT}&afterId=${encodeURIComponent(afterId)}`
-        : `/api/legacy-cv?limit=${PAGE_LIMIT}`;
+      const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
+      if (afterId) params.set('afterId', afterId);
+      if (search)  params.set('search',  search.trim());
 
-      const res  = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res  = await fetch(`/api/legacy-cv?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const json = await res.json() as { success: boolean; data?: PageData; error?: string };
-      if (json.success && json.data) {
-        setPageData(json.data);
-      }
+      if (json.success && json.data) setPageData(json.data);
     } catch (err) {
       console.error('[legacy page] fetch error', err);
     } finally {
@@ -101,11 +107,24 @@ export default function LegacyPage() {
   }, []);
 
   // Initial load
-  useEffect(() => {
-    fetchPage(null);
-  }, [fetchPage]);
+  useEffect(() => { fetchPage(null, ''); }, [fetchPage]);
 
-  // ── Import a JSON file ────────────────────────────────────
+  // ── Debounce search → fetch from page 1 ──────────────────
+  useEffect(() => {
+    if (debounceId.current) clearTimeout(debounceId.current);
+    debounceId.current = setTimeout(() => {
+      const trimmed = searchInput.trim().toLowerCase();
+      if (trimmed === activeSearch) return;           // no real change
+      setActiveSearch(trimmed);
+      setCursorStack([null]);
+      setCurrentPage(0);
+      fetchPage(null, trimmed);
+    }, 350);
+    return () => { if (debounceId.current) clearTimeout(debounceId.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
+
+  // ── Import JSON ───────────────────────────────────────────
   async function handleFile(file: File) {
     if (!file.name.toLowerCase().endsWith('.json')) {
       setImportState('error');
@@ -116,9 +135,11 @@ export default function LegacyPage() {
     setImportError('');
 
     try {
-      const text    = await file.text();
-      const parsed  = JSON.parse(text) as unknown;
-      const records = Array.isArray(parsed) ? parsed : (parsed as Record<string, unknown[]>).records ?? [];
+      const text   = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      const records = Array.isArray(parsed)
+        ? parsed
+        : (parsed as Record<string, unknown[]>).records ?? [];
 
       const token = await auth.currentUser?.getIdToken() ?? '';
       const res   = await fetch('/api/legacy-cv', {
@@ -126,15 +147,18 @@ export default function LegacyPage() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body:    JSON.stringify({ records }),
       });
-      const json = await res.json() as { success: boolean; imported?: number; error?: string };
+      const json = await res.json() as {
+        success: boolean; imported?: number; skipped?: number; error?: string;
+      };
 
       if (json.success) {
         setImportCount(json.imported ?? 0);
+        setImportSkip(json.skipped ?? 0);
         setImportState('done');
-        // Reload first page
+        // Reload list from start (same search)
         setCursorStack([null]);
         setCurrentPage(0);
-        fetchPage(null);
+        fetchPage(null, activeSearch);
       } else {
         setImportState('error');
         setImportError(json.error ?? 'Import failed.');
@@ -170,14 +194,9 @@ export default function LegacyPage() {
     if (!pageData?.hasMore || !pageData.nextId) return;
     const nextAfter = pageData.nextId;
     const newPage   = currentPage + 1;
-    // Push cursor for the next page
-    setCursorStack(s => {
-      const copy = [...s];
-      copy[newPage] = nextAfter;
-      return copy;
-    });
+    setCursorStack(s => { const c = [...s]; c[newPage] = nextAfter; return c; });
     setCurrentPage(newPage);
-    fetchPage(nextAfter);
+    fetchPage(nextAfter, activeSearch);
   }
 
   function goPrev() {
@@ -185,21 +204,15 @@ export default function LegacyPage() {
     const prevPage   = currentPage - 1;
     const prevCursor = cursorStack[prevPage] ?? null;
     setCurrentPage(prevPage);
-    fetchPage(prevCursor);
+    fetchPage(prevCursor, activeSearch);
   }
 
-  // ── Filtered records (client-side search) ─────────────────
-  const filtered = (pageData?.records ?? []).filter(r => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return r.name.toLowerCase().includes(q) || r.rank.toLowerCase().includes(q);
-  });
-
-  // ── Pagination display ────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────
   const total   = pageData?.total ?? 0;
   const showing = pageData?.records.length ?? 0;
   const from    = currentPage * PAGE_LIMIT + 1;
   const to      = currentPage * PAGE_LIMIT + showing;
+  const records = pageData?.records ?? [];
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -210,7 +223,7 @@ export default function LegacyPage() {
 
       <div className="flex-1 overflow-y-auto bg-surface-50 p-6 space-y-6">
 
-        {/* ── Import section ───────────────────────────────── */}
+        {/* ── Import zone ──────────────────────────────────── */}
         <div
           onDragEnter={onDragEnter}
           onDragLeave={onDragLeave}
@@ -235,7 +248,7 @@ export default function LegacyPage() {
               }
             </div>
 
-            {/* Text */}
+            {/* Status text */}
             <div className="flex-1 text-center sm:text-left">
               {importState === 'idle' || importState === 'error' ? (
                 <>
@@ -243,7 +256,7 @@ export default function LegacyPage() {
                     {isDragging ? 'Release to import' : 'Drop a JSON file here, or click to browse'}
                   </p>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    JSON array of records with Name, Nationality, Rank, Email, M1/M2/M3 fields
+                    JSON array — fields: Name, Nationality, Rank, Email, M1/M2/M3
                   </p>
                   {importState === 'error' && (
                     <p className="text-xs text-red-500 mt-1">{importError}</p>
@@ -252,19 +265,29 @@ export default function LegacyPage() {
               ) : importState === 'importing' ? (
                 <p className="text-sm font-semibold text-slate-700 animate-pulse">Importing records…</p>
               ) : (
-                <p className="text-sm font-semibold text-emerald-700">
-                  {importCount.toLocaleString()} records imported successfully
-                </p>
+                <div>
+                  <p className="text-sm font-semibold text-emerald-700">
+                    {importCount.toLocaleString()} record{importCount !== 1 ? 's' : ''} imported
+                    {importSkip > 0 && (
+                      <span className="ml-2 text-amber-600 font-medium">
+                        · {importSkip.toLocaleString()} duplicate{importSkip !== 1 ? 's' : ''} skipped
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Records with matching email or name were not imported again
+                  </p>
+                </div>
               )}
             </div>
 
-            {/* Button */}
+            {/* Browse button */}
             <button
-              onClick={() => fileInput.current?.click()}
+              onClick={() => { setImportState('idle'); fileInput.current?.click(); }}
               disabled={importState === 'importing'}
               className="shrink-0 rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 disabled:opacity-50 transition-colors"
             >
-              Browse File
+              {importState === 'done' ? 'Import More' : 'Browse File'}
             </button>
           </div>
 
@@ -281,34 +304,50 @@ export default function LegacyPage() {
           />
         </div>
 
-        {/* ── Search + stats bar ───────────────────────────── */}
+        {/* ── Search + stats ────────────────────────────────── */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
             <input
               type="text"
-              placeholder="Search by name or rank…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+              placeholder="Search by name across all records…"
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
             />
+            {/* Clear button */}
+            {searchInput && (
+              <button
+                onClick={() => setSearchInput('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-xs"
+              >
+                ✕
+              </button>
+            )}
           </div>
-          {total > 0 && (
-            <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
-              <Users className="h-3.5 w-3.5" />
-              <span>{total.toLocaleString()} total records</span>
-            </div>
-          )}
+
+          <div className="flex items-center gap-3 text-xs text-slate-400 font-medium">
+            {total > 0 && (
+              <span className="flex items-center gap-1">
+                <Users className="h-3.5 w-3.5" />
+                {activeSearch
+                  ? `${total.toLocaleString()} match${total !== 1 ? 'es' : ''}`
+                  : `${total.toLocaleString()} total records`
+                }
+              </span>
+            )}
+            {loading && (
+              <span className="flex items-center gap-1.5 text-primary-500">
+                <div className="h-3 w-3 animate-spin rounded-full border border-transparent border-t-primary-500" />
+                Searching…
+              </span>
+            )}
+          </div>
         </div>
 
         {/* ── Records list ─────────────────────────────────── */}
-        {loading ? (
-          <div className="flex items-center justify-center py-24 text-slate-400 text-sm gap-2">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
-            Loading…
-          </div>
-        ) : filtered.length === 0 && total === 0 ? (
-          /* Empty state */
+        {!loading && records.length === 0 && total === 0 && !activeSearch ? (
+          /* Empty state — no data at all */
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
             <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-slate-100">
               <Archive className="h-10 w-10 text-slate-300" />
@@ -320,21 +359,23 @@ export default function LegacyPage() {
               </p>
             </div>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : !loading && records.length === 0 && activeSearch ? (
+          /* No search results */
           <div className="flex flex-col items-center justify-center py-16 text-slate-400 text-sm gap-2">
             <Search className="h-8 w-8 text-slate-200" />
-            No records match &ldquo;{search}&rdquo;
+            <p>No records match &ldquo;{searchInput}&rdquo;</p>
+            <p className="text-xs text-slate-300">Try a different name prefix</p>
           </div>
         ) : (
           <AnimatePresence mode="popLayout">
             <div className="grid gap-3">
-              {filtered.map((cv, idx) => (
+              {records.map((cv, idx) => (
                 <motion.div
                   key={cv.id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.18, delay: Math.min(idx * 0.025, 0.3) }}
+                  transition={{ duration: 0.18, delay: Math.min(idx * 0.02, 0.25) }}
                   className="flex items-start gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
                 >
                   {/* Avatar */}
@@ -350,7 +391,6 @@ export default function LegacyPage() {
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <p className="text-sm font-bold text-slate-800 truncate">{cv.name || '(No name)'}</p>
 
-                      {/* Nationality badge */}
                       {cv.nationality && (
                         <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-500">
                           <Globe className="h-3 w-3 shrink-0" />
@@ -358,7 +398,6 @@ export default function LegacyPage() {
                         </span>
                       )}
 
-                      {/* Rank badge */}
                       {cv.rank && (
                         <span className={cn(
                           'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold',
@@ -369,11 +408,8 @@ export default function LegacyPage() {
                       )}
                     </div>
 
-                    {/* Contact info */}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
-                      {cv.email && (
-                        <EmailLink email={cv.email} size="xs" truncate />
-                      )}
+                      {cv.email && <EmailLink email={cv.email} size="xs" truncate />}
                       {cv.phones.map((p, i) => (
                         <PhoneLink key={i} phone={p} size="xs" />
                       ))}
@@ -386,10 +422,10 @@ export default function LegacyPage() {
         )}
 
         {/* ── Pagination ───────────────────────────────────── */}
-        {total > 0 && (
+        {total > PAGE_LIMIT || currentPage > 0 ? (
           <div className="flex items-center justify-between pt-2">
             <p className="text-xs text-slate-400">
-              {total > 0
+              {showing > 0
                 ? `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} records`
                 : ''}
             </p>
@@ -415,7 +451,25 @@ export default function LegacyPage() {
               </button>
             </div>
           </div>
-        )}
+        ) : null}
+
+        {/* Skip info banner (shown once per import if any skipped) */}
+        <AnimatePresence>
+          {importState === 'done' && importSkip > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-700"
+            >
+              <SkipForward className="h-4 w-4 shrink-0 text-amber-500" />
+              <span>
+                <strong>{importSkip.toLocaleString()}</strong> record{importSkip !== 1 ? 's were' : ' was'} skipped
+                because a matching email or name already exists in the database.
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
       </div>
     </div>
