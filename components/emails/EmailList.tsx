@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Mail, Paperclip, CheckCircle2, Clock, AlertTriangle, Play } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { EmailLink } from '@/components/ui/ContactLink';
 import { formatDate, timeAgo, truncate } from '@/lib/utils/helpers';
 import type { OutlookEmail } from '@/types';
 
@@ -64,11 +65,14 @@ export function EmailList({ emails, processing, onProcessSingle, onProcessAll }:
                 <p className="text-sm font-medium text-slate-900 truncate">
                   {email.subject || '(no subject)'}
                 </p>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {email.from?.emailAddress?.name || email.from?.emailAddress?.address}
-                  {' · '}
-                  <span className="text-slate-400">{email.from?.emailAddress?.address}</span>
-                </p>
+                <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                  {email.from?.emailAddress?.name && (
+                    <span className="text-xs text-slate-500">{email.from.emailAddress.name}</span>
+                  )}
+                  {email.from?.emailAddress?.address && (
+                    <EmailLink email={email.from.emailAddress.address} size="xs" />
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {email.hasAttachments && (

@@ -3,12 +3,13 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Mail, Phone, Anchor, Clock, BookOpen,
+  Anchor, Clock, BookOpen,
   AlertCircle, ChevronDown, ChevronUp,
   ClipboardList, Zap,
 } from 'lucide-react';
 import { CVPreviewButton } from '@/components/ui/CVPreviewButton';
 import { Badge } from '@/components/ui/Badge';
+import { ContactRow } from '@/components/ui/ContactLink';
 import { cn, formatDate } from '@/lib/utils/helpers';
 import type { Candidate, RankEntry, RankRequirement } from '@/types';
 
@@ -216,18 +217,13 @@ export function CandidateCard({ candidate, index = 0, rankConfig }: CandidateCar
           </div>
 
           {/* Contact */}
-          <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-2">
-            {candidate.email && (
-              <span className="flex items-center gap-1 text-[11px] text-slate-500">
-                <Mail className="h-3 w-3" />{candidate.email}
-              </span>
-            )}
-            {candidate.phone && (
-              <span className="flex items-center gap-1 text-[11px] text-slate-500">
-                <Phone className="h-3 w-3" />{candidate.phone}
-              </span>
-            )}
-          </div>
+          <ContactRow
+            email={candidate.email}
+            phone={candidate.phone}
+            size="xs"
+            truncate
+            className="mt-2"
+          />
         </div>
       </div>
 

@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  UserCheck, UserX, RefreshCw, Mail, Phone,
+  UserCheck, UserX, RefreshCw, Mail,
   Anchor, Clock, BookOpen, AlertCircle,
   CheckCircle2, ClipboardList, ChevronDown, ChevronUp,
-  Copy, MessageSquare, CheckSquare, Square, Zap,
+  CheckSquare, Square, Zap, MessageSquare,
 } from 'lucide-react';
+import { EmailLink, PhoneLink } from '@/components/ui/ContactLink';
 import { CVPreviewButton } from '@/components/ui/CVPreviewButton';
 import { BulkMailDialog } from '@/components/email/BulkMailDialog';
 import { CandidateFilters, DEFAULT_FILTERS, applyFilters } from '@/components/candidates/CandidateFilters';
@@ -136,11 +137,6 @@ function CandidateCard({
   const [note,        setNote]        = useState('');
   const [pendingDecision, setPending] = useState<'selected' | 'unselected' | null>(null);
 
-  function copyEmail() {
-    navigator.clipboard.writeText(candidate.email);
-    toast.success('Email copied');
-  }
-
   function handleDecisionClick(d: 'selected' | 'unselected') {
     setPending(d);
     setNoteOpen(true);
@@ -219,19 +215,9 @@ function CandidateCard({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
-            {candidate.email && (
-              <button onClick={copyEmail} className="flex items-center gap-1 text-xs text-slate-500 hover:text-primary-600 transition-colors group">
-                <Mail className="h-3 w-3" />
-                <span className="truncate max-w-[180px]">{candidate.email}</span>
-                <Copy className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100" />
-              </button>
-            )}
-            {candidate.phone && (
-              <span className="flex items-center gap-1 text-xs text-slate-500">
-                <Phone className="h-3 w-3" />{candidate.phone}
-              </span>
-            )}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">
+            {candidate.email && <EmailLink email={candidate.email} size="sm" truncate />}
+            {candidate.phone && <PhoneLink phone={candidate.phone} size="sm" />}
           </div>
 
           <div className="flex flex-wrap items-center gap-x-4 mt-1">

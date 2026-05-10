@@ -6,6 +6,7 @@ import {
   X, Mail, Send, RefreshCw, CheckCircle2, XCircle, Users, ChevronDown,
 } from 'lucide-react';
 import { VariableEditor, VariableInput } from '@/components/email/VariableEditor';
+import { EmailLink } from '@/components/ui/ContactLink';
 import { apiClient } from '@/lib/utils/api-client';
 import { cn } from '@/lib/utils/helpers';
 import toast from 'react-hot-toast';
@@ -281,7 +282,7 @@ export function BulkMailDialog({ candidates, onClose }: Props) {
                           {/* Info */}
                           <div className="flex-1 min-w-0">
                             <p className="font-semibold text-slate-700 truncate">{r.name}</p>
-                            <p className="text-slate-400 truncate">{r.email}</p>
+                            <EmailLink email={r.email} size="xs" truncate />
                             {r.status === 'failed' && r.error && (
                               <p className="text-red-500 mt-0.5 text-[11px]">{r.error}</p>
                             )}

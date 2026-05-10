@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { EmailLink } from '@/components/ui/ContactLink';
 import { apiClient } from '@/lib/utils/api-client';
 import { cn, timeAgo, formatDateTime, fileSizeLabel } from '@/lib/utils/helpers';
 import toast from 'react-hot-toast';
@@ -423,7 +424,7 @@ function EmailDetail({ email, onClose, onProcess, processing, isMobile }: {
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <span className="text-sm font-semibold text-slate-900">{senderName}</span>
-              <span className="text-xs text-slate-400 truncate">&lt;{senderAddr}&gt;</span>
+              {senderAddr && <EmailLink email={senderAddr} size="xs" />}
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 mt-0.5">
               <span className="flex items-center gap-1 text-[11px] text-slate-500">
