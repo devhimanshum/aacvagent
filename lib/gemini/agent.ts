@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { MaritimeAIResult, MaritimeDocument, RankEntry } from '@/types';
 import { withRetry } from '@/lib/utils/helpers';
 import { getOpenAISettings } from '@/lib/firebase/integration-settings';
+import { MARITIME_RANKS } from '@/lib/utils/ranks';
 
 export interface AIUsage {
   inputTokens: number;
@@ -33,14 +34,7 @@ async function getOpenAIConfig() {
   return { apiKey, model };
 }
 
-const MARITIME_RANKS = [
-  'Master', 'Chief Officer', 'Second Officer', 'Third Officer', 'Deck Cadet',
-  'Chief Engineer', 'Second Engineer', 'Third Engineer', 'Fourth Engineer',
-  'TME/Fifth Engineer', 'Electrical Officer - COC', 'Electrical Officer - without COC',
-  'Electrical Cadet', 'Fitter', 'Bosun', 'AB Deck', 'AB Engine',
-  'Ordinary Seamen', 'Wiper', 'Gas Engineer', 'Pumpman', 'Chief Cook',
-  'Messman/GS/Asst. Cook',
-];
+// MARITIME_RANKS imported from @/lib/utils/ranks
 
 function buildPrompt(cvText: string): string {
   const today     = new Date();

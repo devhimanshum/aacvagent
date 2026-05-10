@@ -17,53 +17,19 @@ import {
 } from '@/lib/outlook/client';
 import { extractCVText, isSupportedCVFile } from '@/lib/utils/cv-parser';
 import { analyzeCV } from '@/lib/gemini/agent';
+import { normalizeRank, ranksMatch as ranksSynonymMatch } from '@/lib/utils/ranks';
 import { appendCandidateToSheet } from '@/lib/google/sheets';
 // import { uploadCVToStorage } from '@/lib/firebase/storage'; // TODO: enable once Firebase Storage is set up
 import type { ProcessEmailResult } from '@/types';
 
-/* ─── Maritime rank synonym map ───────────────────────────────
-   Each key is the canonical name; values are aliases that should
-   be treated as the same rank.  All comparisons are lower-case. */
-const RANK_SYNONYMS: Record<string, string[]> = {
-  'master':           ['captain', 'master mariner', 'commanding officer', 'cmd', 'capt'],
-  'chief officer':    ['c/o', 'chief mate', '1st officer', 'first officer', '1/o', 'chief off'],
-  'second officer':   ['2nd officer', '2/o', 'second mate', '2nd mate', 'second off'],
-  'third officer':    ['3rd officer', '3/o', 'third mate', '3rd mate', 'third off'],
-  'chief engineer':   ['c/e', 'chief eng', 'chief engr', '1st engineer', '1/e'],
-  'second engineer':  ['2nd engineer', '2/e', 'second engr', '2nd engr'],
-  'third engineer':   ['3rd engineer', '3/e', 'third engr', '3rd engr'],
-  'fourth engineer':  ['4th engineer', '4/e', 'fourth engr', '4th engr'],
-  'electrical officer': ['eto', 'electro technical officer', 'electro-technical officer', 'elec officer'],
-  'bosun':            ['boatswain', "bo'sun", 'bosun/ab'],
-  'able seaman':      ['ab', 'a.b.', 'able bodied', 'able-bodied seaman'],
-  'ordinary seaman':  ['os', 'o.s.', 'ord seaman'],
-  'motorman':         ['motor man', 'moterman'],
-  'oiler':            ['wiper', 'engine room rating'],
-  'cook':             ['chief cook', 'ship cook'],
-  'pump man':         ['pumpman'],
-};
-
-/** Normalise a rank string for comparison */
-function normalizeRank(rank: string): string {
-  return rank.toLowerCase().replace(/[^a-z0-9/]/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-/** Resolve a rank string to its canonical form (or itself if not found) */
-function canonicalRank(rank: string): string {
-  const n = normalizeRank(rank);
-  for (const [canon, aliases] of Object.entries(RANK_SYNONYMS)) {
-    if (n === canon || aliases.includes(n)) return canon;
-    // partial containment check (handles "Chief Officer Grade I" etc.)
-    if (n.includes(canon) || aliases.some(a => n.includes(a))) return canon;
-  }
-  return n;
-}
-
-/** True when two rank strings refer to the same position */
+/** True when config rank and CV rank refer to the same position (synonym-aware) */
 function ranksMatch(configRank: string, cvRank: string): boolean {
   if (!cvRank) return false;
-  return canonicalRank(configRank) === canonicalRank(cvRank);
+  return ranksSynonymMatch(configRank, cvRank);
 }
+
+// re-export normalizeRank so linter doesn't complain it's unused
+void normalizeRank;
 
 /**
  * Evaluates candidate rank history against the active config requirements.

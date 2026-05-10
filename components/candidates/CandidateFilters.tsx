@@ -3,69 +3,16 @@
 import { useState } from 'react';
 import {
   Search, SlidersHorizontal, X, ChevronDown, ChevronUp,
-  Clock, Anchor, ArrowUpDown,
+  Clock, Anchor, ArrowUpDown, CheckSquare, Square,
 } from 'lucide-react';
 import { cn } from '@/lib/utils/helpers';
+import { RANK_GROUPS, ranksMatch, rankMatchesQuery } from '@/lib/utils/ranks';
 import type { Candidate } from '@/types';
-
-/* ── Maritime rank categories ──────────────────────────────── */
-export const RANK_CATEGORIES: Record<string, { label: string; color: string; ranks: string[] }> = {
-  deck: {
-    label: 'Deck Officers',
-    color: 'text-blue-700 bg-blue-50 border-blue-200',
-    ranks: [
-      'master', 'captain', 'chief officer', 'chief mate', 'c/o',
-      'second officer', '2nd officer', '2/o',
-      'third officer', '3rd officer', '3/o',
-      'deck officer', 'deck cadet', 'navigating cadet',
-    ],
-  },
-  engine: {
-    label: 'Engine Officers',
-    color: 'text-orange-700 bg-orange-50 border-orange-200',
-    ranks: [
-      'chief engineer', 'c/e',
-      'second engineer', '2nd engineer', '2/e',
-      'third engineer', '3rd engineer', '3/e',
-      'fourth engineer', '4th engineer', '4/e',
-      'engine officer', 'engine cadet', 'junior engineer',
-    ],
-  },
-  electrical: {
-    label: 'Electrical / ETO',
-    color: 'text-yellow-700 bg-yellow-50 border-yellow-200',
-    ranks: ['eto', 'electrical officer', 'electro technical officer', 'electrician'],
-  },
-  ratings_deck: {
-    label: 'Deck Ratings',
-    color: 'text-cyan-700 bg-cyan-50 border-cyan-200',
-    ranks: ['bosun', 'boatswain', 'able seaman', 'ab', 'ordinary seaman', 'os', 'deck fitter', 'pumpman'],
-  },
-  ratings_engine: {
-    label: 'Engine Ratings',
-    color: 'text-red-700 bg-red-50 border-red-200',
-    ranks: ['motorman', 'oiler', 'wiper', 'fitter', 'engine fitter', 'mechanic'],
-  },
-  catering: {
-    label: 'Catering',
-    color: 'text-pink-700 bg-pink-50 border-pink-200',
-    ranks: ['chief cook', 'cook', 'steward', 'chief steward', 'messman'],
-  },
-};
-
-export function rankCategory(rank: string): string | null {
-  if (!rank) return null;
-  const r = rank.toLowerCase();
-  for (const [key, cat] of Object.entries(RANK_CATEGORIES)) {
-    if (cat.ranks.some(k => r.includes(k) || k.includes(r))) return key;
-  }
-  return null;
-}
 
 /* ── Filter state ─────────────────────────────────────────── */
 export interface FilterState {
   search:        string;
-  rankCategory:  string;
+  selectedRanks: string[];   // canonical rank names — multi-select
   dateFrom:      string;
   dateTo:        string;
   minSeaService: number;
@@ -76,7 +23,7 @@ export interface FilterState {
 }
 
 export const DEFAULT_FILTERS: FilterState = {
-  search: '', rankCategory: '', dateFrom: '', dateTo: '',
+  search: '', selectedRanks: [], dateFrom: '', dateTo: '',
   minSeaService: 0, rankMatch: 'all', duplicate: 'all',
   sortBy: 'date', sortDir: 'desc',
 };
@@ -85,20 +32,22 @@ export const DEFAULT_FILTERS: FilterState = {
 export function applyFilters(candidates: Candidate[], f: FilterState): Candidate[] {
   let list = [...candidates];
 
+  // Text search — name / email / currentRank only (with synonym matching for rank)
   if (f.search.trim()) {
-    const q = f.search.toLowerCase();
+    const q = f.search.trim().toLowerCase();
     list = list.filter(c =>
       c.name?.toLowerCase().includes(q) ||
       c.email?.toLowerCase().includes(q) ||
-      c.currentRank?.toLowerCase().includes(q) ||
-      c.education?.toLowerCase().includes(q) ||
       c.senderEmail?.toLowerCase().includes(q) ||
-      c.rankHistory?.some(r => r.rank?.toLowerCase().includes(q))
+      rankMatchesQuery(c.currentRank ?? '', q),  // synonym-aware rank search
     );
   }
 
-  if (f.rankCategory) {
-    list = list.filter(c => rankCategory(c.currentRank ?? '') === f.rankCategory);
+  // Rank multi-select — check currentRank only with synonym resolution
+  if (f.selectedRanks.length > 0) {
+    list = list.filter(c =>
+      f.selectedRanks.some(selected => ranksMatch(selected, c.currentRank ?? '')),
+    );
   }
 
   if (f.dateFrom) {
@@ -134,14 +83,15 @@ export function applyFilters(candidates: Candidate[], f: FilterState): Candidate
 
 export function activeFilterCount(f: FilterState): number {
   let n = 0;
-  if (f.search)            n++;
-  if (f.rankCategory)      n++;
-  if (f.minSeaService > 0) n++;
-  if (f.sortBy !== 'date' || f.sortDir !== 'desc') n++;
+  if (f.search)                                       n++;
+  if (f.selectedRanks.length > 0)                     n++;
+  if (f.minSeaService > 0)                            n++;
+  if (f.sortBy !== 'date' || f.sortDir !== 'desc')    n++;
+  if (f.rankMatch !== 'all')                          n++;
   return n;
 }
 
-/* ── Active chip ─────────────────────────────────────────── */
+/* ── Small helpers ───────────────────────────────────────── */
 function ActiveChip({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-primary-100 border border-primary-200 px-2.5 py-0.5 text-[11px] font-semibold text-primary-700 whitespace-nowrap">
@@ -153,10 +103,9 @@ function ActiveChip({ label, onRemove }: { label: string; onRemove: () => void }
   );
 }
 
-/* ── Label ───────────────────────────────────────────────── */
 function FilterLabel({ icon: Icon, children }: { icon: React.ElementType; children: React.ReactNode }) {
   return (
-    <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+    <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
       <Icon className="h-3 w-3" />{children}
     </label>
   );
@@ -183,6 +132,13 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
   }
   function reset() { onChange(DEFAULT_FILTERS); }
 
+  // Toggle a rank in the multi-select
+  function toggleRank(rank: string) {
+    const cur = filters.selectedRanks;
+    const next = cur.includes(rank) ? cur.filter(r => r !== rank) : [...cur, rank];
+    set('selectedRanks', next);
+  }
+
   const seaLabel = filters.minSeaService === 0
     ? 'Any'
     : `${Math.floor(filters.minSeaService / 12)}y ${filters.minSeaService % 12}m`;
@@ -198,7 +154,7 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
           <input
             value={filters.search}
             onChange={e => set('search', e.target.value)}
-            placeholder="Search name, email, rank…"
+            placeholder="Search name, email or rank…"
             className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 placeholder:text-slate-300 focus:outline-none focus:border-primary-300 focus:bg-white transition-all"
           />
           {filters.search && (
@@ -221,7 +177,7 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
           <SlidersHorizontal className="h-3.5 w-3.5" />
           Filters
           {hasActive && (
-            <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-white/25 text-[10px] font-bold px-1">
+            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white/25 text-[10px] font-bold px-1">
               {activeCount}
             </span>
           )}
@@ -249,36 +205,70 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
 
       {/* ── Expanded filter panel ── */}
       {expanded && (
-        <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-4 space-y-4">
+        <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-4 space-y-5">
 
-          {/* Row 1: Rank category */}
+          {/* ── Rank multi-select ── */}
           <div>
-            <FilterLabel icon={Anchor}>Rank Category</FilterLabel>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                onClick={() => set('rankCategory', '')}
-                className={cn('rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-all',
-                  !filters.rankCategory
-                    ? 'bg-slate-800 text-white border-slate-800'
-                    : 'border-slate-200 text-slate-500 bg-white hover:border-slate-300')}
-              >
-                All
-              </button>
-              {Object.entries(RANK_CATEGORIES).map(([key, cat]) => (
+            <div className="flex items-center justify-between mb-2">
+              <FilterLabel icon={Anchor}>
+                Rank Filter
+                {filters.selectedRanks.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-bold text-primary-700">
+                    {filters.selectedRanks.length} selected
+                  </span>
+                )}
+              </FilterLabel>
+              {filters.selectedRanks.length > 0 && (
                 <button
-                  key={key}
-                  onClick={() => set('rankCategory', filters.rankCategory === key ? '' : key)}
-                  className={cn('rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-all',
-                    filters.rankCategory === key ? cat.color : 'border-slate-200 text-slate-500 bg-white hover:border-slate-300')}
+                  onClick={() => set('selectedRanks', [])}
+                  className="text-[10px] text-slate-400 hover:text-red-500 transition-colors font-medium"
                 >
-                  {cat.label}
+                  Clear all
                 </button>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              {RANK_GROUPS.map(group => (
+                <div key={group.label}>
+                  {/* Group header */}
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
+                    {group.label}
+                  </p>
+                  {/* Rank chips */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {group.ranks.map(rank => {
+                      const selected = filters.selectedRanks.includes(rank);
+                      return (
+                        <button
+                          key={rank}
+                          onClick={() => toggleRank(rank)}
+                          className={cn(
+                            'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-all',
+                            selected ? group.activeColor : group.chipColor,
+                          )}
+                        >
+                          {selected
+                            ? <CheckSquare className="h-3 w-3 shrink-0" />
+                            : <Square      className="h-3 w-3 shrink-0 opacity-40" />
+                          }
+                          {rank}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               ))}
             </div>
+
+            <p className="mt-2 text-[10px] text-slate-400">
+              Matches candidate's <strong>primary rank</strong> only. Synonyms resolved automatically
+              (e.g. "2nd Engineer" = "Second Engineer").
+            </p>
           </div>
 
-          {/* Row 2: 2-column grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* ── Row: Sea service + Sort ── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-100 pt-4">
 
             {/* Min sea service */}
             <div>
@@ -324,11 +314,14 @@ export function CandidateFilters({ filters, onChange, totalCount, filteredCount,
       {/* ── Active filter chips (collapsed state) ── */}
       {hasActive && !expanded && (
         <div className="flex flex-wrap gap-1.5 border-t border-slate-100 px-4 py-2.5 bg-primary-50/30">
-          {filters.rankCategory && (
-            <ActiveChip label={RANK_CATEGORIES[filters.rankCategory]?.label ?? filters.rankCategory} onRemove={() => set('rankCategory', '')} />
-          )}
+          {filters.selectedRanks.map(r => (
+            <ActiveChip key={r} label={r} onRemove={() => toggleRank(r)} />
+          ))}
           {filters.minSeaService > 0 && (
             <ActiveChip label={`≥ ${seaLabel} sea service`} onRemove={() => set('minSeaService', 0)} />
+          )}
+          {filters.rankMatch !== 'all' && (
+            <ActiveChip label={`Rank match: ${filters.rankMatch}`} onRemove={() => set('rankMatch', 'all')} />
           )}
           {(filters.sortBy !== 'date' || filters.sortDir !== 'desc') && (
             <ActiveChip label={`Sort: ${filters.sortBy} ${filters.sortDir}`} onRemove={() => onChange({ ...filters, sortBy: 'date', sortDir: 'desc' })} />
