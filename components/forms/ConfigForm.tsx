@@ -6,26 +6,46 @@ import {
 } from '@hello-pangea/dnd';
 import {
   Save, CheckCircle2, Anchor, GripVertical, ToggleLeft,
-  ToggleRight, Trash2, Plus, X,
+  ToggleRight, Trash2, Plus, X, RefreshCw, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { apiClient } from '@/lib/utils/api-client';
 import { cn } from '@/lib/utils/helpers';
 import toast from 'react-hot-toast';
 import type { RankConfig, RankRequirement } from '@/types';
-import { MARITIME_RANKS } from '@/lib/utils/ranks';
+import { MARITIME_RANKS, RANK_GROUPS, normalizeRank } from '@/lib/utils/ranks';
+
+// ── Helpers ───────────────────────────────────────────────────
 
 function buildDefaults(): RankRequirement[] {
-  return (MARITIME_RANKS as readonly string[]).map((rank, i) => ({ rank, enabled: true, order: i + 1 }));
+  return (MARITIME_RANKS as readonly string[]).map((rank, i) => ({
+    rank, enabled: true, order: i + 1,
+  }));
 }
 
-// Re-assign `order` after any reorder / add / delete so it always
-// equals the 1-based visual position.
 function reindex(list: RankRequirement[]): RankRequirement[] {
   return list.map((r, i) => ({ ...r, order: i + 1 }));
 }
 
-// ─── Single rank row ──────────────────────────────────────────
+/** Find which group a rank belongs to (for badge colouring) */
+function rankGroupInfo(rank: string): { label: string; badge: string } | null {
+  const n = normalizeRank(rank);
+  for (const g of RANK_GROUPS) {
+    if (g.ranks.some(r => normalizeRank(r) === n)) {
+      return { label: g.label, badge: g.chipColor };
+    }
+  }
+  return null;
+}
+
+/** True if the stored rank list is different from the new standard 28 */
+function isOutdated(stored: RankRequirement[]): boolean {
+  const storedNames = stored.map(r => normalizeRank(r.rank)).sort().join('|');
+  const stdNames    = (MARITIME_RANKS as readonly string[]).map(normalizeRank).sort().join('|');
+  return storedNames !== stdNames;
+}
+
+// ── Rank row ─────────────────────────────────────────────────
 interface RowProps {
   req:       RankRequirement;
   index:     number;
@@ -35,6 +55,8 @@ interface RowProps {
 }
 
 function RankRow({ req, index, isDragging, onToggle, onDelete }: RowProps) {
+  const group = rankGroupInfo(req.rank);
+
   return (
     <div
       className={cn(
@@ -67,7 +89,17 @@ function RankRow({ req, index, isDragging, onToggle, onDelete }: RowProps) {
         {req.rank}
       </span>
 
-      {/* Enable / disable toggle */}
+      {/* Category badge */}
+      {group && (
+        <span className={cn(
+          'hidden sm:inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap',
+          group.badge,
+        )}>
+          {group.label}
+        </span>
+      )}
+
+      {/* Toggle */}
       <button
         onClick={onToggle}
         title={req.enabled ? 'Disable' : 'Enable'}
@@ -91,28 +123,21 @@ function RankRow({ req, index, isDragging, onToggle, onDelete }: RowProps) {
   );
 }
 
-// ─── Add-rank inline form ─────────────────────────────────────
+// ── Add-rank form ─────────────────────────────────────────────
 function AddRankRow({ onAdd }: { onAdd: (name: string) => void }) {
-  const [open, setOpen]   = useState(false);
-  const [name, setName]   = useState('');
-  const inputRef          = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const inputRef        = useRef<HTMLInputElement>(null);
 
   function submit() {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    onAdd(trimmed);
+    const t = name.trim();
+    if (!t) return;
+    onAdd(t);
     setName('');
     setOpen(false);
   }
 
-  function handleKey(e: React.KeyboardEvent) {
-    if (e.key === 'Enter')  submit();
-    if (e.key === 'Escape') { setName(''); setOpen(false); }
-  }
-
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
+  useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
 
   if (!open) {
     return (
@@ -120,7 +145,7 @@ function AddRankRow({ onAdd }: { onAdd: (name: string) => void }) {
         onClick={() => setOpen(true)}
         className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 px-4 py-3 text-xs font-semibold text-slate-400 hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50/40 transition-all"
       >
-        <Plus className="h-4 w-4" /> Add new rank
+        <Plus className="h-4 w-4" /> Add custom rank
       </button>
     );
   }
@@ -132,11 +157,11 @@ function AddRankRow({ onAdd }: { onAdd: (name: string) => void }) {
         ref={inputRef}
         value={name}
         onChange={e => setName(e.target.value)}
-        onKeyDown={handleKey}
+        onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { setName(''); setOpen(false); } }}
         placeholder="Enter rank name…"
         className="flex-1 bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
       />
-      <button onClick={submit} disabled={!name.trim()} className="shrink-0 rounded-lg bg-primary-600 px-3 py-1 text-xs font-semibold text-white hover:bg-primary-700 transition-colors disabled:opacity-40">
+      <button onClick={submit} disabled={!name.trim()} className="shrink-0 rounded-lg bg-primary-600 px-3 py-1 text-xs font-semibold text-white hover:bg-primary-700 disabled:opacity-40 transition-colors">
         Add
       </button>
       <button onClick={() => { setName(''); setOpen(false); }} className="shrink-0 rounded-lg p-1 text-slate-400 hover:bg-slate-200 transition-colors">
@@ -146,36 +171,77 @@ function AddRankRow({ onAdd }: { onAdd: (name: string) => void }) {
   );
 }
 
-// ─── Main ConfigForm ──────────────────────────────────────────
-export function ConfigForm() {
-  const [ranks,   setRanks]   = useState<RankRequirement[]>(buildDefaults());
-  const [loading, setLoading] = useState(true);
-  const [saving,  setSaving]  = useState(false);
-  const [saved,   setSaved]   = useState(false);
+// ── Reference panel: all 28 standard ranks grouped ───────────
+function StandardRanksPanel() {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <Anchor className="h-4 w-4 text-primary-500" />
+        <p className="text-sm font-bold text-slate-800">28 Standard Maritime Ranks</p>
+      </div>
 
-  // Load saved config from API
+      <div className="space-y-3">
+        {RANK_GROUPS.map(group => (
+          <div key={group.label}>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
+              {group.label}
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {group.ranks.map((rank, i) => (
+                <span
+                  key={rank}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                    group.chipColor,
+                  )}
+                >
+                  <span className="opacity-50 text-[10px]">{
+                    // find global order number
+                    (MARITIME_RANKS as readonly string[]).indexOf(rank) + 1
+                  }.</span>
+                  {rank}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-[10px] text-slate-400 border-t border-slate-100 pt-3">
+        Drag to reorder priority. Toggle to enable / disable for matching. Synonyms are resolved
+        automatically — "2nd Engineer", "2E", "2/E" all match <strong>Second Engineer</strong>.
+      </p>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────
+export function ConfigForm() {
+  const [ranks,      setRanks]      = useState<RankRequirement[]>(buildDefaults());
+  const [loading,    setLoading]    = useState(true);
+  const [saving,     setSaving]     = useState(false);
+  const [saved,      setSaved]      = useState(false);
+  const [outdated,   setOutdated]   = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
         const res = await apiClient.get<{ success: boolean; data: RankConfig | null }>('/api/config');
         if (res.data?.requirements?.length) {
-          // Sort by order (legacy data may lack it), assign any missing orders
-          const sorted = [...res.data.requirements]
-            .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+          const sorted = [...res.data.requirements].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
           setRanks(reindex(sorted));
+          setOutdated(isOutdated(sorted));
         }
       } catch { /* use defaults */ }
       finally { setLoading(false); }
     })();
   }, []);
 
-  // ── Drag end ────────────────────────────────────────────────
   function handleDragEnd(result: DropResult) {
     if (!result.destination) return;
     const src = result.source.index;
     const dst = result.destination.index;
     if (src === dst) return;
-
     setRanks(prev => {
       const next = [...prev];
       const [moved] = next.splice(src, 1);
@@ -184,20 +250,16 @@ export function ConfigForm() {
     });
   }
 
-  // ── Toggle enable ───────────────────────────────────────────
   function toggleEnabled(idx: number) {
     setRanks(prev => prev.map((r, i) => i === idx ? { ...r, enabled: !r.enabled } : r));
   }
 
-  // ── Delete ──────────────────────────────────────────────────
   function deleteRank(idx: number) {
     setRanks(prev => reindex(prev.filter((_, i) => i !== idx)));
   }
 
-  // ── Add new ─────────────────────────────────────────────────
   function addRank(name: string) {
     setRanks(prev => {
-      // Avoid duplicates (case-insensitive)
       if (prev.some(r => r.rank.toLowerCase() === name.toLowerCase())) {
         toast.error(`"${name}" already exists`);
         return prev;
@@ -206,23 +268,22 @@ export function ConfigForm() {
     });
   }
 
-  // ── Bulk toggles ────────────────────────────────────────────
   function enableAll()  { setRanks(prev => prev.map(r => ({ ...r, enabled: true  }))); }
   function disableAll() { setRanks(prev => prev.map(r => ({ ...r, enabled: false }))); }
 
-  // ── Reset to defaults ───────────────────────────────────────
-  function resetDefaults() {
-    if (!confirm('Reset to the default 23 ranks? Unsaved changes will be lost.')) return;
+  /** Replace the current list with the new 28 standard ranks */
+  function applyStandard() {
     setRanks(buildDefaults());
-    toast('Reset to defaults');
+    setOutdated(false);
+    toast('Standard 28 ranks applied — click Save to confirm');
   }
 
-  // ── Save ────────────────────────────────────────────────────
   async function handleSave() {
     setSaving(true); setSaved(false);
     try {
       await apiClient.post('/api/config', { requirements: ranks });
       setSaved(true);
+      setOutdated(false);
       toast.success('Rank configuration saved!');
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -234,7 +295,6 @@ export function ConfigForm() {
 
   const enabledCount = ranks.filter(r => r.enabled).length;
 
-  // ── Loading skeleton ─────────────────────────────────────────
   if (loading) {
     return (
       <div className="space-y-3">
@@ -246,114 +306,139 @@ export function ConfigForm() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-6 items-start">
 
-      {/* ── Header bar ── */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100">
-            <Anchor className="h-5 w-5 text-primary-600" />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">Rank Priority Order</h3>
-            <p className="text-xs text-slate-500">
-              {enabledCount} of {ranks.length} ranks active
-            </p>
-          </div>
-        </div>
+      {/* ── Left: drag list ── */}
+      <div className="space-y-4">
 
-        {/* Bulk action buttons */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={enableAll}
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-colors"
-          >
-            Enable all
-          </button>
-          <button
-            onClick={disableAll}
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200 transition-colors"
-          >
-            Disable all
-          </button>
-          <button
-            onClick={resetDefaults}
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-500 hover:bg-slate-200 transition-colors"
-          >
-            Reset defaults
-          </button>
-        </div>
-      </div>
-
-      {/* ── Hint ── */}
-      <div className="flex items-center gap-3 rounded-xl bg-blue-50 border border-blue-100 px-4 py-3">
-        <GripVertical className="h-4 w-4 text-blue-400 shrink-0" />
-        <p className="text-xs text-blue-700 leading-relaxed">
-          <strong>Drag rows</strong> to set priority order (1 = highest). Toggle the switch to enable / disable a rank. Use the <strong>+ Add</strong> button to create custom ranks.
-        </p>
-      </div>
-
-      {/* ── Column header ── */}
-      <div className="grid grid-cols-[20px_28px_1fr_36px_28px] items-center gap-3 px-3 pb-1 border-b border-slate-100">
-        <span />
-        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">#</span>
-        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Rank</span>
-        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">Active</span>
-        <span />
-      </div>
-
-      {/* ── Drag-and-drop list ── */}
-      <DragDropContext onDragEnd={handleDragEnd}>
-        <Droppable droppableId="ranks">
-          {(provided, snapshot) => (
-            <div
-              ref={provided.innerRef}
-              {...provided.droppableProps}
-              className={cn(
-                'space-y-2 rounded-2xl transition-all duration-200',
-                snapshot.isDraggingOver && 'bg-slate-50/80',
-              )}
-            >
-              {ranks.map((req, index) => (
-                <Draggable key={req.rank} draggableId={req.rank} index={index}>
-                  {(drag, snap) => (
-                    <div
-                      ref={drag.innerRef}
-                      {...drag.draggableProps}
-                      {...drag.dragHandleProps}
-                    >
-                      <RankRow
-                        req={req}
-                        index={index}
-                        isDragging={snap.isDragging}
-                        onToggle={() => toggleEnabled(index)}
-                        onDelete={() => deleteRank(index)}
-                      />
-                    </div>
-                  )}
-                </Draggable>
-              ))}
-              {provided.placeholder}
+        {/* Outdated rank notice */}
+        {outdated && (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800">Old rank list detected</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                Your saved config uses the previous rank names. Click <strong>Apply Standard Ranks</strong> to replace them with the new 28-rank system, then save.
+              </p>
             </div>
-          )}
-        </Droppable>
-      </DragDropContext>
+            <button
+              onClick={applyStandard}
+              className="shrink-0 flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600 transition-colors"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Apply Standard Ranks
+            </button>
+          </div>
+        )}
 
-      {/* ── Add new rank ── */}
-      <AddRankRow onAdd={addRank} />
+        {/* Header */}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100">
+              <Anchor className="h-5 w-5 text-primary-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Rank Priority Order</h3>
+              <p className="text-xs text-slate-500">
+                {enabledCount} of {ranks.length} ranks active — drag to reorder
+              </p>
+            </div>
+          </div>
 
-      {/* ── Save bar ── */}
-      <div className="flex items-center justify-between gap-4 pt-4 border-t border-slate-100 flex-wrap">
-        <p className="text-xs text-slate-400">
-          Order and enabled state apply to all future CV processing and filtering.
-        </p>
-        <Button
-          onClick={handleSave}
-          loading={saving}
-          icon={saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-        >
-          {saved ? 'Saved!' : 'Save Configuration'}
-        </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={enableAll}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-colors"
+            >
+              Enable all
+            </button>
+            <button
+              onClick={disableAll}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200 transition-colors"
+            >
+              Disable all
+            </button>
+            <button
+              onClick={applyStandard}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-primary-50 border border-primary-200 text-primary-700 hover:bg-primary-100 transition-colors"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Reset to standard 28
+            </button>
+          </div>
+        </div>
+
+        {/* Hint */}
+        <div className="flex items-center gap-3 rounded-xl bg-blue-50 border border-blue-100 px-4 py-2.5">
+          <GripVertical className="h-4 w-4 text-blue-400 shrink-0" />
+          <p className="text-xs text-blue-700 leading-relaxed">
+            <strong>Drag rows</strong> to set priority (1 = highest). Toggle the switch to enable / disable. Category badge shown on each row. Synonyms are resolved automatically during CV matching.
+          </p>
+        </div>
+
+        {/* Column header */}
+        <div className="grid grid-cols-[20px_28px_1fr_auto_36px_28px] items-center gap-3 px-3 pb-1 border-b border-slate-100">
+          <span />
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">#</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Rank</span>
+          <span className="hidden sm:block text-[10px] font-bold uppercase tracking-wider text-slate-400">Category</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">Active</span>
+          <span />
+        </div>
+
+        {/* DnD list */}
+        <DragDropContext onDragEnd={handleDragEnd}>
+          <Droppable droppableId="ranks">
+            {(provided, snapshot) => (
+              <div
+                ref={provided.innerRef}
+                {...provided.droppableProps}
+                className={cn(
+                  'space-y-2 rounded-2xl transition-all duration-200',
+                  snapshot.isDraggingOver && 'bg-slate-50/80',
+                )}
+              >
+                {ranks.map((req, index) => (
+                  <Draggable key={req.rank} draggableId={req.rank} index={index}>
+                    {(drag, snap) => (
+                      <div ref={drag.innerRef} {...drag.draggableProps} {...drag.dragHandleProps}>
+                        <RankRow
+                          req={req}
+                          index={index}
+                          isDragging={snap.isDragging}
+                          onToggle={() => toggleEnabled(index)}
+                          onDelete={() => deleteRank(index)}
+                        />
+                      </div>
+                    )}
+                  </Draggable>
+                ))}
+                {provided.placeholder}
+              </div>
+            )}
+          </Droppable>
+        </DragDropContext>
+
+        <AddRankRow onAdd={addRank} />
+
+        {/* Save bar */}
+        <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 flex-wrap">
+          <p className="text-xs text-slate-400">
+            Order and active state apply to all future CV processing and filtering.
+          </p>
+          <Button
+            onClick={handleSave}
+            loading={saving}
+            icon={saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+          >
+            {saved ? 'Saved!' : 'Save Configuration'}
+          </Button>
+        </div>
+      </div>
+
+      {/* ── Right: reference panel ── */}
+      <div className="xl:sticky xl:top-6">
+        <StandardRanksPanel />
       </div>
     </div>
   );
