@@ -1,0 +1,423 @@
+'use client';
+
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Archive, Upload, Search, ChevronLeft, ChevronRight,
+  Globe, Users,
+} from 'lucide-react';
+import { Header } from '@/components/layout/Header';
+import { EmailLink, PhoneLink } from '@/components/ui/ContactLink';
+import { auth } from '@/lib/firebase/config';
+import { cn } from '@/lib/utils/helpers';
+import type { LegacyCv } from '@/types';
+
+// ── Rank color map ────────────────────────────────────────────
+function rankColor(rank: string): string {
+  const r = rank.toLowerCase();
+  if (r.includes('master') || r.includes('chief officer') || r.includes('chief engineer')) {
+    return 'bg-navy-100 text-navy-800 border-navy-200';
+  }
+  if (r.includes('second officer') || r.includes('third officer') || r.includes('2nd officer') || r.includes('3rd officer')) {
+    return 'bg-blue-100 text-blue-800 border-blue-200';
+  }
+  if (r.includes('engineer')) {
+    return 'bg-orange-100 text-orange-800 border-orange-200';
+  }
+  if (r.includes('rating') || r.includes('able') || r.includes('ordinary') || r.includes('bosun') || r.includes('deck')) {
+    return 'bg-teal-100 text-teal-800 border-teal-200';
+  }
+  if (r.includes('cook') || r.includes('steward') || r.includes('catering')) {
+    return 'bg-pink-100 text-pink-800 border-pink-200';
+  }
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+}
+
+// ── Avatar initials ───────────────────────────────────────────
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0 || !parts[0]) return '?';
+  if (parts.length === 1) return parts[0][0].toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// ── Avatar color (deterministic from name) ────────────────────
+const avatarColors = [
+  'bg-blue-500', 'bg-indigo-500', 'bg-violet-500', 'bg-emerald-500',
+  'bg-teal-500', 'bg-sky-500', 'bg-amber-500', 'bg-rose-500',
+];
+function avatarColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % avatarColors.length;
+  return avatarColors[h];
+}
+
+// ── Page state types ──────────────────────────────────────────
+type ImportState = 'idle' | 'importing' | 'done' | 'error';
+
+interface PageData {
+  records:  LegacyCv[];
+  hasMore:  boolean;
+  nextId:   string | null;
+  total:    number;
+}
+
+const PAGE_LIMIT = 50;
+
+// ── Main page ─────────────────────────────────────────────────
+export default function LegacyPage() {
+  const [pageData,      setPageData]      = useState<PageData | null>(null);
+  const [loading,       setLoading]       = useState(false);
+  const [importState,   setImportState]   = useState<ImportState>('idle');
+  const [importCount,   setImportCount]   = useState(0);
+  const [importError,   setImportError]   = useState('');
+  const [isDragging,    setIsDragging]    = useState(false);
+  const [search,        setSearch]        = useState('');
+  const [cursorStack,   setCursorStack]   = useState<Array<string | null>>([null]); // stack of afterId values; index = page index
+  const [currentPage,   setCurrentPage]   = useState(0); // 0-based
+
+  const dragCount = useRef(0);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  // ── Fetch page from API ───────────────────────────────────
+  const fetchPage = useCallback(async (afterId: string | null) => {
+    setLoading(true);
+    try {
+      const token = await auth.currentUser?.getIdToken() ?? '';
+      const url   = afterId
+        ? `/api/legacy-cv?limit=${PAGE_LIMIT}&afterId=${encodeURIComponent(afterId)}`
+        : `/api/legacy-cv?limit=${PAGE_LIMIT}`;
+
+      const res  = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const json = await res.json() as { success: boolean; data?: PageData; error?: string };
+      if (json.success && json.data) {
+        setPageData(json.data);
+      }
+    } catch (err) {
+      console.error('[legacy page] fetch error', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Initial load
+  useEffect(() => {
+    fetchPage(null);
+  }, [fetchPage]);
+
+  // ── Import a JSON file ────────────────────────────────────
+  async function handleFile(file: File) {
+    if (!file.name.toLowerCase().endsWith('.json')) {
+      setImportState('error');
+      setImportError('Only .json files are supported.');
+      return;
+    }
+    setImportState('importing');
+    setImportError('');
+
+    try {
+      const text    = await file.text();
+      const parsed  = JSON.parse(text) as unknown;
+      const records = Array.isArray(parsed) ? parsed : (parsed as Record<string, unknown[]>).records ?? [];
+
+      const token = await auth.currentUser?.getIdToken() ?? '';
+      const res   = await fetch('/api/legacy-cv', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ records }),
+      });
+      const json = await res.json() as { success: boolean; imported?: number; error?: string };
+
+      if (json.success) {
+        setImportCount(json.imported ?? 0);
+        setImportState('done');
+        // Reload first page
+        setCursorStack([null]);
+        setCurrentPage(0);
+        fetchPage(null);
+      } else {
+        setImportState('error');
+        setImportError(json.error ?? 'Import failed.');
+      }
+    } catch (err) {
+      setImportState('error');
+      setImportError(err instanceof Error ? err.message : 'Failed to read file.');
+    }
+  }
+
+  // ── Drag handlers ─────────────────────────────────────────
+  function onDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    dragCount.current++;
+    if (dragCount.current === 1) setIsDragging(true);
+  }
+  function onDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    dragCount.current--;
+    if (dragCount.current === 0) setIsDragging(false);
+  }
+  function onDragOver(e: React.DragEvent) { e.preventDefault(); }
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragCount.current = 0;
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  }
+
+  // ── Pagination ────────────────────────────────────────────
+  function goNext() {
+    if (!pageData?.hasMore || !pageData.nextId) return;
+    const nextAfter = pageData.nextId;
+    const newPage   = currentPage + 1;
+    // Push cursor for the next page
+    setCursorStack(s => {
+      const copy = [...s];
+      copy[newPage] = nextAfter;
+      return copy;
+    });
+    setCurrentPage(newPage);
+    fetchPage(nextAfter);
+  }
+
+  function goPrev() {
+    if (currentPage === 0) return;
+    const prevPage   = currentPage - 1;
+    const prevCursor = cursorStack[prevPage] ?? null;
+    setCurrentPage(prevPage);
+    fetchPage(prevCursor);
+  }
+
+  // ── Filtered records (client-side search) ─────────────────
+  const filtered = (pageData?.records ?? []).filter(r => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return r.name.toLowerCase().includes(q) || r.rank.toLowerCase().includes(q);
+  });
+
+  // ── Pagination display ────────────────────────────────────
+  const total   = pageData?.total ?? 0;
+  const showing = pageData?.records.length ?? 0;
+  const from    = currentPage * PAGE_LIMIT + 1;
+  const to      = currentPage * PAGE_LIMIT + showing;
+
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden">
+      <Header
+        title="Old CVs"
+        subtitle="Legacy seafarer database — import and browse historical CV records"
+      />
+
+      <div className="flex-1 overflow-y-auto bg-surface-50 p-6 space-y-6">
+
+        {/* ── Import section ───────────────────────────────── */}
+        <div
+          onDragEnter={onDragEnter}
+          onDragLeave={onDragLeave}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          className={cn(
+            'relative rounded-2xl border-2 border-dashed transition-all duration-200 p-6',
+            isDragging
+              ? 'border-primary-400 bg-primary-50/60 shadow-lg shadow-primary-100/50'
+              : 'border-slate-200 bg-white hover:border-primary-300 hover:bg-primary-50/10',
+          )}
+        >
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            {/* Icon */}
+            <div className={cn(
+              'flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl transition-colors',
+              isDragging ? 'bg-primary-100' : 'bg-slate-100',
+            )}>
+              {importState === 'importing'
+                ? <div className="h-6 w-6 animate-spin rounded-full border-2 border-transparent border-t-primary-500" />
+                : <Upload className={cn('h-6 w-6', isDragging ? 'text-primary-600' : 'text-slate-400')} />
+              }
+            </div>
+
+            {/* Text */}
+            <div className="flex-1 text-center sm:text-left">
+              {importState === 'idle' || importState === 'error' ? (
+                <>
+                  <p className="text-sm font-semibold text-slate-700">
+                    {isDragging ? 'Release to import' : 'Drop a JSON file here, or click to browse'}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    JSON array of records with Name, Nationality, Rank, Email, M1/M2/M3 fields
+                  </p>
+                  {importState === 'error' && (
+                    <p className="text-xs text-red-500 mt-1">{importError}</p>
+                  )}
+                </>
+              ) : importState === 'importing' ? (
+                <p className="text-sm font-semibold text-slate-700 animate-pulse">Importing records…</p>
+              ) : (
+                <p className="text-sm font-semibold text-emerald-700">
+                  {importCount.toLocaleString()} records imported successfully
+                </p>
+              )}
+            </div>
+
+            {/* Button */}
+            <button
+              onClick={() => fileInput.current?.click()}
+              disabled={importState === 'importing'}
+              className="shrink-0 rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 disabled:opacity-50 transition-colors"
+            >
+              Browse File
+            </button>
+          </div>
+
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={e => {
+              const f = e.target.files?.[0];
+              if (f) handleFile(f);
+              e.target.value = '';
+            }}
+          />
+        </div>
+
+        {/* ── Search + stats bar ───────────────────────────── */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search by name or rank…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+            />
+          </div>
+          {total > 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+              <Users className="h-3.5 w-3.5" />
+              <span>{total.toLocaleString()} total records</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Records list ─────────────────────────────────── */}
+        {loading ? (
+          <div className="flex items-center justify-center py-24 text-slate-400 text-sm gap-2">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-primary-500" />
+            Loading…
+          </div>
+        ) : filtered.length === 0 && total === 0 ? (
+          /* Empty state */
+          <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
+            <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-slate-100">
+              <Archive className="h-10 w-10 text-slate-300" />
+            </div>
+            <div>
+              <p className="text-lg font-bold text-slate-700">No legacy CVs yet</p>
+              <p className="text-sm text-slate-400 mt-1">
+                Drop a JSON file above to import your first batch of seafarer records
+              </p>
+            </div>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-slate-400 text-sm gap-2">
+            <Search className="h-8 w-8 text-slate-200" />
+            No records match &ldquo;{search}&rdquo;
+          </div>
+        ) : (
+          <AnimatePresence mode="popLayout">
+            <div className="grid gap-3">
+              {filtered.map((cv, idx) => (
+                <motion.div
+                  key={cv.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18, delay: Math.min(idx * 0.025, 0.3) }}
+                  className="flex items-start gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
+                >
+                  {/* Avatar */}
+                  <div className={cn(
+                    'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white shadow-sm',
+                    avatarColor(cv.name),
+                  )}>
+                    {initials(cv.name)}
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <p className="text-sm font-bold text-slate-800 truncate">{cv.name || '(No name)'}</p>
+
+                      {/* Nationality badge */}
+                      {cv.nationality && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                          <Globe className="h-3 w-3 shrink-0" />
+                          {cv.nationality}
+                        </span>
+                      )}
+
+                      {/* Rank badge */}
+                      {cv.rank && (
+                        <span className={cn(
+                          'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                          rankColor(cv.rank),
+                        )}>
+                          {cv.rank}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Contact info */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                      {cv.email && (
+                        <EmailLink email={cv.email} size="xs" truncate />
+                      )}
+                      {cv.phones.map((p, i) => (
+                        <PhoneLink key={i} phone={p} size="xs" />
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </AnimatePresence>
+        )}
+
+        {/* ── Pagination ───────────────────────────────────── */}
+        {total > 0 && (
+          <div className="flex items-center justify-between pt-2">
+            <p className="text-xs text-slate-400">
+              {total > 0
+                ? `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} records`
+                : ''}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={goPrev}
+                disabled={currentPage === 0 || loading}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Prev
+              </button>
+              <span className="text-xs text-slate-400 font-medium px-1">
+                Page {currentPage + 1}
+              </span>
+              <button
+                onClick={goNext}
+                disabled={!pageData?.hasMore || loading}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}

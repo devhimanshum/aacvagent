@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Inbox, UserCheck, UserX, Settings,
   SlidersHorizontal, LogOut, ChevronLeft, ChevronRight,
-  Anchor, UploadCloud,
+  Anchor, UploadCloud, Archive,
 } from 'lucide-react';
 import { cn } from '@/lib/utils/helpers';
 import { useAuth } from '@/hooks/useAuth';
@@ -21,6 +21,7 @@ const navItems = [
   { href: '/dashboard/review',     icon: UserCheck,         label: 'Selected',    desc: 'Review CVs' },
   { href: '/dashboard/selected',   icon: Anchor,            label: 'Onboard',     desc: 'Onboarded' },
   { href: '/dashboard/unselected', icon: UserX,             label: 'Unselected',  desc: 'Rejected' },
+  { href: '/dashboard/legacy',     icon: Archive,           label: 'Old CVs',     desc: 'Legacy Database' },
   { href: '/dashboard/config',     icon: SlidersHorizontal, label: 'Rank Config', desc: 'Criteria' },
   { href: '/dashboard/settings',   icon: Settings,          label: 'Settings',    desc: 'System' },
 ];

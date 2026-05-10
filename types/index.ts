@@ -221,3 +221,14 @@ export interface EmailTemplate {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface LegacyCv {
+  id: string;
+  name: string;
+  nationality: string;
+  rank: string;
+  email: string;        // cleaned (no trailing spaces, no _x000D_ junk)
+  phones: string[];     // M1/M2/M3 cleaned — null and [GPT ERROR] values removed
+  importedAt: string;   // ISO date string
+  createdAt: string;
+}

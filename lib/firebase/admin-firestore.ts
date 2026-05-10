@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from './admin';
-import type { Candidate, RankConfig, ReviewStatus, OutlookSettings, GeminiSettings, ProcessedEmail, TokenUsageRecord, DailyUsageSummary } from '@/types';
+import type { Candidate, RankConfig, ReviewStatus, OutlookSettings, GeminiSettings, ProcessedEmail, TokenUsageRecord, DailyUsageSummary, LegacyCv } from '@/types';
 
 const C = {
   PENDING:          'candidates/pending/list',
@@ -9,6 +9,7 @@ const C = {
   PROCESSED_EMAILS: 'emails/processedEmails/list',
   CONFIG:           'config',
   SETTINGS:         'settings',
+  LEGACY_CVS:       'legacyCvs',
 } as const;
 
 // ── Helper: Firestore doc → plain object ──────────────────────
@@ -236,6 +237,53 @@ export async function adminGetDailyUsageSummary(days = 30): Promise<DailyUsageSu
   }
 
   return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+// ── Legacy CV import ──────────────────────────────────────────
+export async function adminImportLegacyCvs(records: Omit<LegacyCv, 'id'>[]): Promise<number> {
+  const db        = adminDb();
+  const CHUNK     = 499;
+  let   totalSaved = 0;
+
+  for (let i = 0; i < records.length; i += CHUNK) {
+    const chunk = records.slice(i, i + CHUNK);
+    const batch = db.batch();
+    for (const rec of chunk) {
+      const ref = db.collection(C.LEGACY_CVS).doc();
+      batch.set(ref, { ...rec, createdAt: new Date().toISOString() });
+    }
+    await batch.commit();
+    totalSaved += chunk.length;
+  }
+
+  return totalSaved;
+}
+
+export async function adminGetLegacyCvsPaged(
+  limit: number,
+  afterId?: string,
+): Promise<{ records: LegacyCv[]; hasMore: boolean; nextId: string | null; total: number }> {
+  const db  = adminDb();
+  const col = db.collection(C.LEGACY_CVS);
+
+  // Total count
+  const countSnap = await col.count().get();
+  const total     = countSnap.data().count;
+
+  let q = col.orderBy('createdAt', 'desc').limit(limit + 1);
+
+  if (afterId) {
+    const cursor = await col.doc(afterId).get();
+    if (cursor.exists) q = q.startAfter(cursor);
+  }
+
+  const snap    = await q.get();
+  const docs    = snap.docs.map(d => toPlain(d) as unknown as LegacyCv);
+  const hasMore = docs.length > limit;
+  const records = hasMore ? docs.slice(0, limit) : docs;
+  const nextId  = hasMore ? records[records.length - 1].id : null;
+
+  return { records, hasMore, nextId, total };
 }
 
 // ── Legacy job config (kept so old imports don't break) ───────
