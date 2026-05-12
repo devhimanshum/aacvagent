@@ -86,8 +86,12 @@ export async function GET(req: NextRequest) {
     const limit   = Math.min(parseInt(searchParams.get('limit') ?? '50', 10) || 50, 200);
     const afterId = searchParams.get('afterId') ?? undefined;
     const search  = searchParams.get('search') ?? undefined;
+    const sortRaw = searchParams.get('sort') ?? 'newest';
+    const sort    = (['newest', 'name_az', 'name_za'] as const).includes(sortRaw as 'newest')
+      ? sortRaw as 'newest' | 'name_az' | 'name_za'
+      : 'newest';
 
-    const data = await adminGetLegacyCvsPaged(limit, afterId, search);
+    const data = await adminGetLegacyCvsPaged(limit, afterId, search, sort);
 
     return NextResponse.json({ success: true, data });
   } catch (err) {

@@ -310,29 +310,33 @@ export async function adminGetLegacyCvsPaged(
   limit: number,
   afterId?: string,
   search?: string,
+  sort: 'newest' | 'name_az' | 'name_za' = 'newest',
 ): Promise<{ records: LegacyCv[]; hasMore: boolean; nextId: string | null; total: number }> {
   const db  = adminDb();
   const col = db.collection(C.LEGACY_CVS);
 
-  // Build base query — range on nameLower enables prefix search across all records
   const q_term = search?.trim().toLowerCase() || '';
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let baseQ: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = col as any;
   if (q_term) {
+    // '\uf8ff' is the highest Unicode char — caps a Firestore prefix range correctly
     baseQ = col
       .where('nameLower', '>=', q_term)
       .where('nameLower', '<=', q_term + '');
   }
 
-  // Total count (respects search filter)
   const countSnap = await baseQ.count().get();
   const total     = countSnap.data().count;
 
-  // When searching, sort by name; otherwise newest first
-  let q = q_term
-    ? baseQ.orderBy('nameLower', 'asc').limit(limit + 1)
-    : baseQ.orderBy('createdAt', 'desc').limit(limit + 1);
+  let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
+  if (q_term || sort === 'name_az') {
+    q = baseQ.orderBy('nameLower', 'asc').limit(limit + 1);
+  } else if (sort === 'name_za') {
+    q = baseQ.orderBy('nameLower', 'desc').limit(limit + 1);
+  } else {
+    q = baseQ.orderBy('createdAt', 'desc').limit(limit + 1);
+  }
 
   if (afterId) {
     const cursor = await col.doc(afterId).get();

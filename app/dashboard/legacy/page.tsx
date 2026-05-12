@@ -54,21 +54,21 @@ function chunk<T>(arr: T[], size: number): T[][] {
 // ── Import progress state ─────────────────────────────────────
 interface ImportProgress {
   phase:          'reading' | 'importing' | 'stopping' | 'stopped' | 'done' | 'error';
-  totalRecords:   number;   // total in JSON
+  totalRecords:   number;
   totalBatches:   number;
-  batchDone:      number;   // batches completed
-  recordsDone:    number;   // actual records processed so far
+  batchDone:      number;
+  recordsDone:    number;
   imported:       number;
   skipped:        number;
   error?:         string;
   fileName:       string;
-  startedAt:      number;   // Date.now()
+  startedAt:      number;
 }
 
 // Send 2 000 records per API call — server chunks internally into Firestore batches of 499.
 // 9 500 records = 5 API calls.  Run PARALLEL calls at once → finishes in seconds not minutes.
 const BATCH_SIZE = 2000;
-const PARALLEL   = 4;   // concurrent requests
+const PARALLEL   = 4;
 
 // ── Page-level types ──────────────────────────────────────────
 interface PageData {
@@ -116,6 +116,9 @@ export default function LegacyPage() {
   const [activeSearch,setActiveSearch]= useState('');
   const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
   const [currentPage, setCurrentPage] = useState(0);
+  const [sortBy,      setSortBy]      = useState<'newest' | 'name_az' | 'name_za'>('newest');
+  const [rankFilter,  setRankFilter]  = useState('');
+  const [natFilter,   setNatFilter]   = useState('');
 
   const abortRef   = useRef(false);
   const dragCount  = useRef(0);
@@ -123,11 +126,11 @@ export default function LegacyPage() {
   const debounceId = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Fetch page ────────────────────────────────────────────
-  const fetchPage = useCallback(async (afterId: string | null, search: string) => {
+  const fetchPage = useCallback(async (afterId: string | null, search: string, sort: 'newest' | 'name_az' | 'name_za') => {
     setLoading(true);
     try {
       const token  = await auth.currentUser?.getIdToken() ?? '';
-      const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
+      const params = new URLSearchParams({ limit: String(PAGE_LIMIT), sort });
       if (afterId) params.set('afterId', afterId);
       if (search)  params.set('search', search.trim());
       const res  = await fetch(`/api/legacy-cv?${params}`, {
@@ -142,7 +145,7 @@ export default function LegacyPage() {
     }
   }, []);
 
-  useEffect(() => { fetchPage(null, ''); }, [fetchPage]);
+  useEffect(() => { fetchPage(null, '', 'newest'); }, [fetchPage]);
 
   // ── Debounce search ───────────────────────────────────────
   useEffect(() => {
@@ -153,11 +156,19 @@ export default function LegacyPage() {
       setActiveSearch(q);
       setCursorStack([null]);
       setCurrentPage(0);
-      fetchPage(null, q);
+      fetchPage(null, q, sortBy);
     }, 350);
     return () => { if (debounceId.current) clearTimeout(debounceId.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput]);
+
+  // ── Re-fetch when sortBy changes ──────────────────────────
+  useEffect(() => {
+    setCursorStack([null]);
+    setCurrentPage(0);
+    fetchPage(null, activeSearch, sortBy);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortBy]);
 
   // ── Chunked import ────────────────────────────────────────
   async function handleFile(file: File) {
@@ -225,7 +236,6 @@ export default function LegacyPage() {
           if (json.success) {
             return { imported: json.imported ?? 0, skipped: json.skipped ?? 0, count: batchRecords.length };
           }
-          // Server returned an error — surface it
           return { imported: 0, skipped: batchRecords.length, count: batchRecords.length,
             error: json.error ?? 'Server error' };
         } catch (err) {
@@ -256,7 +266,7 @@ export default function LegacyPage() {
     } : null);
     setCursorStack([null]);
     setCurrentPage(0);
-    fetchPage(null, activeSearch);
+    fetchPage(null, activeSearch, sortBy);
   }
 
   // ── Drag handlers ─────────────────────────────────────────
@@ -274,13 +284,13 @@ export default function LegacyPage() {
     const newPage = currentPage + 1;
     setCursorStack(s => { const c = [...s]; c[newPage] = pageData.nextId; return c; });
     setCurrentPage(newPage);
-    fetchPage(pageData.nextId, activeSearch);
+    fetchPage(pageData.nextId, activeSearch, sortBy);
   }
   function goPrev() {
     if (currentPage === 0) return;
     const prev = currentPage - 1;
     setCurrentPage(prev);
-    fetchPage(cursorStack[prev] ?? null, activeSearch);
+    fetchPage(cursorStack[prev] ?? null, activeSearch, sortBy);
   }
 
   const total   = pageData?.total ?? 0;
@@ -288,6 +298,19 @@ export default function LegacyPage() {
   const from    = currentPage * PAGE_LIMIT + 1;
   const to      = currentPage * PAGE_LIMIT + showing;
   const records = pageData?.records ?? [];
+
+  // ── Derive filter options from current page ───────────────
+  const pageRanks = Array.from(new Set(records.map(r => r.rank).filter(Boolean))).sort() as string[];
+  const pageNats  = Array.from(new Set(records.map(r => r.nationality).filter(Boolean))).sort() as string[];
+
+  // ── Client-side filtered records ──────────────────────────
+  const filteredRecords = records.filter(cv => {
+    if (rankFilter && cv.rank?.toLowerCase() !== rankFilter.toLowerCase()) return false;
+    if (natFilter && cv.nationality?.toLowerCase() !== natFilter.toLowerCase()) return false;
+    return true;
+  });
+
+  const activeFilterCount = (rankFilter ? 1 : 0) + (natFilter ? 1 : 0);
 
   const isImporting = progress?.phase === 'importing' || progress?.phase === 'reading' || progress?.phase === 'stopping';
   const pct = progress && progress.totalBatches > 0
@@ -508,7 +531,6 @@ export default function LegacyPage() {
                   Import More
                 </button>
               </div>
-              {/* Mini progress bar — full */}
               <div className="mt-4">
                 <ProgressBar pct={100} />
               </div>
@@ -547,12 +569,22 @@ export default function LegacyPage() {
             )}
           </div>
           <div className="flex items-center gap-3 text-xs text-slate-400 font-medium">
+            {activeFilterCount > 0 && (
+              <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-primary-600 text-white text-[10px] font-bold">
+                {activeFilterCount}
+              </span>
+            )}
             {total > 0 && (
               <span className="flex items-center gap-1">
                 <Users className="h-3.5 w-3.5" />
                 {activeSearch
                   ? `${total.toLocaleString()} match${total !== 1 ? 'es' : ''}`
                   : `${total.toLocaleString()} total records`}
+                {activeFilterCount > 0 && filteredRecords.length !== records.length && (
+                  <span className="text-primary-500 font-semibold ml-1">
+                    · {filteredRecords.length} shown
+                  </span>
+                )}
               </span>
             )}
             {loading && (
@@ -562,6 +594,81 @@ export default function LegacyPage() {
             )}
           </div>
         </div>
+
+        {/* ── Filter bar ── */}
+        {(pageRanks.length > 0 || pageNats.length > 0) && (
+          <div className="flex flex-wrap items-start gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3">
+
+            {/* Sort */}
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Sort</span>
+              <select
+                value={sortBy}
+                onChange={e => { setSortBy(e.target.value as typeof sortBy); setCursorStack([null]); setCurrentPage(0); }}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 focus:outline-none focus:border-primary-400"
+              >
+                <option value="newest">Newest first</option>
+                <option value="name_az">Name A → Z</option>
+                <option value="name_za">Name Z → A</option>
+              </select>
+            </div>
+
+            {/* Divider */}
+            {pageRanks.length > 0 && <div className="hidden sm:block w-px self-stretch bg-slate-100" />}
+
+            {/* Rank chips */}
+            {pageRanks.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 flex-1">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide shrink-0">Rank</span>
+                {pageRanks.slice(0, 8).map(r => (
+                  <button
+                    key={r}
+                    onClick={() => setRankFilter(f => f === r ? '' : r)}
+                    className={cn(
+                      'rounded-full px-2.5 py-0.5 text-[11px] font-semibold border transition-colors',
+                      rankFilter === r
+                        ? 'bg-primary-600 text-white border-primary-600'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-primary-300 hover:text-primary-600',
+                    )}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Nationality chips */}
+            {pageNats.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide shrink-0">Country</span>
+                {pageNats.slice(0, 5).map(n => (
+                  <button
+                    key={n}
+                    onClick={() => setNatFilter(f => f === n ? '' : n)}
+                    className={cn(
+                      'rounded-full px-2.5 py-0.5 text-[11px] font-semibold border transition-colors',
+                      natFilter === n
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600',
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Clear filters */}
+            {(rankFilter || natFilter) && (
+              <button
+                onClick={() => { setRankFilter(''); setNatFilter(''); }}
+                className="ml-auto text-[11px] font-semibold text-slate-400 hover:text-red-500 transition-colors shrink-0"
+              >
+                ✕ Clear filters
+              </button>
+            )}
+          </div>
+        )}
 
         {/* ── Records list ─────────────────────────────────── */}
         {!loading && records.length === 0 && total === 0 && !activeSearch ? (
@@ -581,10 +688,21 @@ export default function LegacyPage() {
             <Search className="h-8 w-8 text-slate-200" />
             <p>No records match &ldquo;{searchInput}&rdquo;</p>
           </div>
+        ) : !loading && filteredRecords.length === 0 && records.length > 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-slate-400 text-sm gap-2">
+            <Search className="h-8 w-8 text-slate-200" />
+            <p>No results match filters</p>
+            <button
+              onClick={() => { setRankFilter(''); setNatFilter(''); }}
+              className="mt-1 text-xs font-semibold text-primary-500 hover:text-primary-700 transition-colors"
+            >
+              Clear filters
+            </button>
+          </div>
         ) : (
           <AnimatePresence mode="popLayout">
             <div className="grid gap-3">
-              {records.map((cv, idx) => (
+              {filteredRecords.map((cv, idx) => (
                 <motion.div
                   key={cv.id}
                   initial={{ opacity: 0, y: 8 }}
