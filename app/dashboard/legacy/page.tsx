@@ -151,6 +151,37 @@ export default function LegacyPage() {
   const debounceId  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const natDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── Auto-reindex on first visit (backfills rankLower / nationalityLower) ──
+  // Without these fields on existing records rank/nat filters return 0 results.
+  // We do this once and remember it in localStorage so subsequent loads are instant.
+  useEffect(() => {
+    const REINDEX_KEY = 'legacyCv_reindexed_v1';
+    if (typeof window === 'undefined') return;
+    if (localStorage.getItem(REINDEX_KEY)) return; // already done
+
+    setReindexState('running');
+    auth.currentUser?.getIdToken().then(token =>
+      fetch('/api/legacy-cv/reindex', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(r => r.json())
+        .then((json: { success: boolean; updated?: number; processed?: number }) => {
+          if (json.success) {
+            localStorage.setItem(REINDEX_KEY, '1');
+            setReindexState('done');
+            setReindexResult({ processed: json.processed ?? 0, updated: json.updated ?? 0 });
+            // Re-fetch so rank/nat filters now return results immediately
+            fetchPage(null, '', 'newest', '', '');
+          } else {
+            setReindexState('idle');
+          }
+        })
+        .catch(() => setReindexState('idle')),
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Fetch page (server-side search + rank + nat) ───────────
   const fetchPage = useCallback(async (
     afterId: string | null,
@@ -614,6 +645,25 @@ export default function LegacyPage() {
             onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
           />
         </div>
+
+        {/* ── Reindex status banner ────────────────────────── */}
+        {reindexState === 'running' && (
+          <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5">
+            <Loader2 className="h-4 w-4 text-blue-500 animate-spin shrink-0" />
+            <p className="text-sm text-blue-700 font-medium">
+              Building filter index for {(pageData?.total ?? 9500).toLocaleString()} records — rank &amp; nationality filters will be ready in a moment…
+            </p>
+          </div>
+        )}
+        {reindexState === 'done' && reindexResult && reindexResult.updated > 0 && (
+          <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5">
+            <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+            <p className="text-sm text-emerald-700 font-medium">
+              Filter index ready — {reindexResult.updated.toLocaleString()} records indexed. Rank &amp; nationality filters now work across all records.
+            </p>
+            <button onClick={() => setReindexResult(null)} className="ml-auto text-emerald-500 hover:text-emerald-700 text-xs">✕</button>
+          </div>
+        )}
 
         {/* ── Filter + Sort bar ─────────────────────────────── */}
         <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3 space-y-3">

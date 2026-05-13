@@ -368,49 +368,65 @@ export async function adminGetLegacyCvsPaged(
   const db  = adminDb();
   const col = db.collection(C.LEGACY_CVS);
 
+  const HIGH = ''; // highest Unicode char — caps a prefix range correctly
+
   const q_term = search?.trim().toLowerCase() || '';
   const q_rank = rankFilter?.trim().toLowerCase() || '';
   const q_nat  = natFilter?.trim().toLowerCase() || '';
 
+  // ── Build query ───────────────────────────────────────────────────────────
+  // All filters use PREFIX RANGE queries (>= field, <= field+HIGH) so they
+  // match partial values ("master" matches "master mariner", "master unlimited"…)
+  // AND so no composite Firestore index is needed (range + orderBy on same field).
+  //
+  // We apply AT MOST ONE filter at a time to avoid composite index requirements.
+  // Priority: name > rank > nationality.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let baseQ: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = col as any;
+  let orderField: string;
+  let orderDir: 'asc' | 'desc' = 'asc';
 
-  // Exact-match equality filters (server-side across all records)
-  if (q_rank) baseQ = baseQ.where('rankLower', '==', q_rank);
-  if (q_nat)  baseQ = baseQ.where('nationalityLower', '==', q_nat);
-
-  // Name prefix search (range query)
   if (q_term) {
+    // Name prefix search
     baseQ = baseQ
       .where('nameLower', '>=', q_term)
-      .where('nameLower', '<=', q_term + '');
-  }
-
-  const countSnap = await baseQ.count().get();
-  const total     = countSnap.data().count;
-
-  // ── orderBy rules (no composite indexes required) ─────────────────────────
-  // Firestore needs a composite index when orderBy field ≠ equality-filter field.
-  // Rule: always orderBy the LEADING equality filter field when one is active.
-  // Name range (>=/<= on nameLower) always forces orderBy('nameLower').
-  // When no filter is active, honour the user's sort preference.
-  let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
-  if (q_term) {
-    // Name range query — must orderBy nameLower (Firestore requirement)
-    q = baseQ.orderBy('nameLower', sort === 'name_za' ? 'desc' : 'asc').limit(limit + 1);
+      .where('nameLower', '<=', q_term + HIGH);
+    orderField = 'nameLower';
+    orderDir   = sort === 'name_za' ? 'desc' : 'asc';
   } else if (q_rank) {
-    // Rank equality filter — orderBy rankLower (same field → single-field index, no composite)
-    q = baseQ.orderBy('rankLower', 'asc').limit(limit + 1);
+    // Rank prefix search — matches "master", "master mariner", "chief officer"…
+    baseQ = baseQ
+      .where('rankLower', '>=', q_rank)
+      .where('rankLower', '<=', q_rank + HIGH);
+    orderField = 'rankLower';
   } else if (q_nat) {
-    // Nationality equality filter — orderBy nationalityLower (same field → single-field index)
-    q = baseQ.orderBy('nationalityLower', 'asc').limit(limit + 1);
+    // Nationality prefix search — "india" matches "indian", "indonesia"…
+    baseQ = baseQ
+      .where('nationalityLower', '>=', q_nat)
+      .where('nationalityLower', '<=', q_nat + HIGH);
+    orderField = 'nationalityLower';
   } else if (sort === 'name_az') {
-    q = baseQ.orderBy('nameLower', 'asc').limit(limit + 1);
+    orderField = 'nameLower';
+    orderDir   = 'asc';
   } else if (sort === 'name_za') {
-    q = baseQ.orderBy('nameLower', 'desc').limit(limit + 1);
+    orderField = 'nameLower';
+    orderDir   = 'desc';
   } else {
-    q = baseQ.orderBy('createdAt', 'desc').limit(limit + 1);
+    orderField = 'createdAt';
+    orderDir   = 'desc';
   }
+
+  // ── Count (best-effort — some filtered counts may fail; that's OK) ────────
+  let total = 0;
+  try {
+    const countSnap = await baseQ.count().get();
+    total = countSnap.data().count;
+  } catch {
+    total = -1; // unknown — will be recalculated from results
+  }
+
+  // ── Paginated list query ──────────────────────────────────────────────────
+  let q = baseQ.orderBy(orderField, orderDir).limit(limit + 1);
 
   if (afterId) {
     const cursor = await col.doc(afterId).get();
@@ -422,6 +438,9 @@ export async function adminGetLegacyCvsPaged(
   const hasMore = docs.length > limit;
   const records = hasMore ? docs.slice(0, limit) : docs;
   const nextId  = hasMore ? records[records.length - 1].id : null;
+
+  // If count failed, approximate from what we fetched
+  if (total === -1) total = hasMore ? limit + 1 : records.length;
 
   return { records, hasMore, nextId, total };
 }
