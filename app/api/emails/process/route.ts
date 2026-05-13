@@ -287,8 +287,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: true, data: { emailId, status: 'error', message: msg } });
       }
 
+      // Use the original `emailId` (from the preview/client), NOT email.id from the
+      // Graph response — they can differ and cause the processedEmails lookup to miss.
       const result = await processEmail(
-        email.id, email.subject,
+        emailId, email.subject,
         email.from.emailAddress.address,
         email.from.emailAddress.name,
         email.receivedDateTime,
