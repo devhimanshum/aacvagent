@@ -251,4 +251,8 @@ export interface LegacyCv {
   phones: string[];     // M1/M2/M3 cleaned — null and [GPT ERROR] values removed
   importedAt: string;   // ISO date string
   createdAt: string;
+  // Server-side filter index fields (lowercase for equality queries)
+  rankLower?: string;
+  nationalityLower?: string;
+  nameLower?: string;
 }

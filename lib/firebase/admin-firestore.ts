@@ -295,7 +295,9 @@ export async function adminImportLegacyCvs(
     for (const rec of chunk) {
       batch.set(col.doc(stableDocId(rec)), {
         ...rec,
-        nameLower: rec.name.toLowerCase().trim(),
+        nameLower:        rec.name.toLowerCase().trim(),
+        rankLower:        (rec.rank ?? '').toLowerCase().trim(),
+        nationalityLower: (rec.nationality ?? '').toLowerCase().trim(),
         createdAt: now,
       });
     }
@@ -311,17 +313,26 @@ export async function adminGetLegacyCvsPaged(
   afterId?: string,
   search?: string,
   sort: 'newest' | 'name_az' | 'name_za' = 'newest',
+  rankFilter?: string,
+  natFilter?: string,
 ): Promise<{ records: LegacyCv[]; hasMore: boolean; nextId: string | null; total: number }> {
   const db  = adminDb();
   const col = db.collection(C.LEGACY_CVS);
 
   const q_term = search?.trim().toLowerCase() || '';
+  const q_rank = rankFilter?.trim().toLowerCase() || '';
+  const q_nat  = natFilter?.trim().toLowerCase() || '';
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let baseQ: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = col as any;
+
+  // Exact-match equality filters (server-side across all records)
+  if (q_rank) baseQ = baseQ.where('rankLower', '==', q_rank);
+  if (q_nat)  baseQ = baseQ.where('nationalityLower', '==', q_nat);
+
+  // Name prefix search (range query)
   if (q_term) {
-    // '\uf8ff' is the highest Unicode char — caps a Firestore prefix range correctly
-    baseQ = col
+    baseQ = baseQ
       .where('nameLower', '>=', q_term)
       .where('nameLower', '<=', q_term + '');
   }
@@ -330,7 +341,10 @@ export async function adminGetLegacyCvsPaged(
   const total     = countSnap.data().count;
 
   let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
-  if (q_term || sort === 'name_az') {
+  if (q_term) {
+    // Name range active — must order by nameLower first
+    q = baseQ.orderBy('nameLower', sort === 'name_za' ? 'desc' : 'asc').limit(limit + 1);
+  } else if (sort === 'name_az') {
     q = baseQ.orderBy('nameLower', 'asc').limit(limit + 1);
   } else if (sort === 'name_za') {
     q = baseQ.orderBy('nameLower', 'desc').limit(limit + 1);

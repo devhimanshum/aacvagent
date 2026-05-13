@@ -40,14 +40,19 @@ function buildRecord(raw: Record<string, unknown>): Omit<LegacyCv, 'id'> {
     if (p) phones.push(p);
   }
 
+  const nationality = cleanString(raw['Nationality'] ?? raw['nationality']);
+  const rank        = cleanString(raw['Rank'] ?? raw['rank']);
+
   return {
-    name:        cleanName(raw['Name'] ?? raw['name']),
-    nationality: cleanString(raw['Nationality'] ?? raw['nationality']),
-    rank:        cleanString(raw['Rank'] ?? raw['rank']),
-    email:       cleanEmail(raw['Email'] ?? raw['email']),
+    name:             cleanName(raw['Name'] ?? raw['name']),
+    nationality,
+    rank,
+    email:            cleanEmail(raw['Email'] ?? raw['email']),
     phones,
-    importedAt:  new Date().toISOString(),
-    createdAt:   new Date().toISOString(),
+    rankLower:        rank.toLowerCase().trim(),
+    nationalityLower: nationality.toLowerCase().trim(),
+    importedAt:       new Date().toISOString(),
+    createdAt:        new Date().toISOString(),
   };
 }
 
@@ -90,8 +95,10 @@ export async function GET(req: NextRequest) {
     const sort    = (['newest', 'name_az', 'name_za'] as const).includes(sortRaw as 'newest')
       ? sortRaw as 'newest' | 'name_az' | 'name_za'
       : 'newest';
+    const rank    = searchParams.get('rank') ?? undefined;
+    const nat     = searchParams.get('nat')  ?? undefined;
 
-    const data = await adminGetLegacyCvsPaged(limit, afterId, search, sort);
+    const data = await adminGetLegacyCvsPaged(limit, afterId, search, sort, rank, nat);
 
     return NextResponse.json({ success: true, data });
   } catch (err) {

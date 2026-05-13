@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Archive, Upload, Search, ChevronLeft, ChevronRight,
-  Globe, Users, CheckCircle2, XCircle, Loader2, FileJson,
+  Globe, Users, CheckCircle2, XCircle, Loader2, FileJson, RefreshCw,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { EmailLink, PhoneLink } from '@/components/ui/ContactLink';
@@ -44,6 +44,26 @@ function avatarColor(name: string): string {
   return AVATAR_COLORS[h];
 }
 
+// ── Hardcoded maritime ranks (covers 95%+ of seafarer database) ──
+const MARITIME_RANKS = [
+  'Master',
+  'Chief Officer',
+  'Second Officer',
+  'Third Officer',
+  'Chief Engineer',
+  '2nd Engineer',
+  '3rd Engineer',
+  '4th Engineer',
+  'Bosun',
+  'AB',
+  'OS',
+  'Cook',
+  'Steward',
+  'Electrician',
+  'Fitter',
+  'Motorman',
+];
+
 // ── Chunk helper ──────────────────────────────────────────────
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -53,20 +73,18 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 // ── Import progress state ─────────────────────────────────────
 interface ImportProgress {
-  phase:          'reading' | 'importing' | 'stopping' | 'stopped' | 'done' | 'error';
-  totalRecords:   number;
-  totalBatches:   number;
-  batchDone:      number;
-  recordsDone:    number;
-  imported:       number;
-  skipped:        number;
-  error?:         string;
-  fileName:       string;
-  startedAt:      number;
+  phase:        'reading' | 'importing' | 'stopping' | 'stopped' | 'done' | 'error';
+  totalRecords: number;
+  totalBatches: number;
+  batchDone:    number;
+  recordsDone:  number;
+  imported:     number;
+  skipped:      number;
+  error?:       string;
+  fileName:     string;
+  startedAt:    number;
 }
 
-// Send 2 000 records per API call — server chunks internally into Firestore batches of 499.
-// 9 500 records = 5 API calls.  Run PARALLEL calls at once → finishes in seconds not minutes.
 const BATCH_SIZE = 2000;
 const PARALLEL   = 4;
 
@@ -106,33 +124,48 @@ function ElapsedTimer({ startedAt }: { startedAt: number }) {
   return <>{m > 0 ? `${m}m ${s}s` : `${s}s`}</>;
 }
 
+// ── Reindex state ─────────────────────────────────────────────
+type ReindexState = 'idle' | 'running' | 'done' | 'error';
+
 // ═══════════════════════════════════════════════════════════════
 export default function LegacyPage() {
-  const [pageData,    setPageData]    = useState<PageData | null>(null);
-  const [loading,     setLoading]     = useState(false);
-  const [progress,    setProgress]    = useState<ImportProgress | null>(null);
-  const [isDragging,  setIsDragging]  = useState(false);
-  const [searchInput, setSearchInput] = useState('');
-  const [activeSearch,setActiveSearch]= useState('');
-  const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
-  const [currentPage, setCurrentPage] = useState(0);
-  const [sortBy,      setSortBy]      = useState<'newest' | 'name_az' | 'name_za'>('newest');
-  const [rankFilter,  setRankFilter]  = useState('');
-  const [natFilter,   setNatFilter]   = useState('');
+  const [pageData,      setPageData]      = useState<PageData | null>(null);
+  const [loading,       setLoading]       = useState(false);
+  const [progress,      setProgress]      = useState<ImportProgress | null>(null);
+  const [isDragging,    setIsDragging]    = useState(false);
+  const [searchInput,   setSearchInput]   = useState('');
+  const [activeSearch,  setActiveSearch]  = useState('');
+  const [cursorStack,   setCursorStack]   = useState<Array<string | null>>([null]);
+  const [currentPage,   setCurrentPage]   = useState(0);
+  const [sortBy,        setSortBy]        = useState<'newest' | 'name_az' | 'name_za'>('newest');
+  const [rankFilter,    setRankFilter]    = useState('');
+  const [natInput,      setNatInput]      = useState('');
+  const [activeNat,     setActiveNat]     = useState('');
+  const [reindexState,  setReindexState]  = useState<ReindexState>('idle');
+  const [reindexResult, setReindexResult] = useState<{ processed: number; updated: number } | null>(null);
 
-  const abortRef   = useRef(false);
-  const dragCount  = useRef(0);
-  const fileInput  = useRef<HTMLInputElement>(null);
-  const debounceId = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef    = useRef(false);
+  const dragCount   = useRef(0);
+  const fileInput   = useRef<HTMLInputElement>(null);
+  const debounceId  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const natDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Fetch page ────────────────────────────────────────────
-  const fetchPage = useCallback(async (afterId: string | null, search: string, sort: 'newest' | 'name_az' | 'name_za') => {
+  // ── Fetch page (server-side search + rank + nat) ───────────
+  const fetchPage = useCallback(async (
+    afterId: string | null,
+    search: string,
+    sort: 'newest' | 'name_az' | 'name_za',
+    rank: string,
+    nat: string,
+  ) => {
     setLoading(true);
     try {
       const token  = await auth.currentUser?.getIdToken() ?? '';
       const params = new URLSearchParams({ limit: String(PAGE_LIMIT), sort });
       if (afterId) params.set('afterId', afterId);
       if (search)  params.set('search', search.trim());
+      if (rank)    params.set('rank', rank.trim());
+      if (nat)     params.set('nat', nat.trim());
       const res  = await fetch(`/api/legacy-cv?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -145,9 +178,10 @@ export default function LegacyPage() {
     }
   }, []);
 
-  useEffect(() => { fetchPage(null, '', 'newest'); }, [fetchPage]);
+  // Initial load
+  useEffect(() => { fetchPage(null, '', 'newest', '', ''); }, [fetchPage]);
 
-  // ── Debounce search ───────────────────────────────────────
+  // ── Debounce name search ──────────────────────────────────
   useEffect(() => {
     if (debounceId.current) clearTimeout(debounceId.current);
     debounceId.current = setTimeout(() => {
@@ -156,19 +190,53 @@ export default function LegacyPage() {
       setActiveSearch(q);
       setCursorStack([null]);
       setCurrentPage(0);
-      fetchPage(null, q, sortBy);
+      fetchPage(null, q, sortBy, rankFilter, activeNat);
     }, 350);
     return () => { if (debounceId.current) clearTimeout(debounceId.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput]);
 
-  // ── Re-fetch when sortBy changes ──────────────────────────
+  // ── Debounce nationality input ────────────────────────────
+  useEffect(() => {
+    if (natDebounce.current) clearTimeout(natDebounce.current);
+    natDebounce.current = setTimeout(() => {
+      const q = natInput.trim().toLowerCase();
+      if (q === activeNat) return;
+      setActiveNat(q);
+      setCursorStack([null]);
+      setCurrentPage(0);
+      fetchPage(null, activeSearch, sortBy, rankFilter, q);
+    }, 400);
+    return () => { if (natDebounce.current) clearTimeout(natDebounce.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [natInput]);
+
+  // ── Re-fetch when sort changes ────────────────────────────
   useEffect(() => {
     setCursorStack([null]);
     setCurrentPage(0);
-    fetchPage(null, activeSearch, sortBy);
+    fetchPage(null, activeSearch, sortBy, rankFilter, activeNat);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy]);
+
+  // ── Rank chip toggle (server-side re-fetch) ───────────────
+  function toggleRank(r: string) {
+    const next = rankFilter === r ? '' : r;
+    setRankFilter(next);
+    setCursorStack([null]);
+    setCurrentPage(0);
+    fetchPage(null, activeSearch, sortBy, next, activeNat);
+  }
+
+  // ── Clear all filters ─────────────────────────────────────
+  function clearFilters() {
+    setRankFilter('');
+    setNatInput('');
+    setActiveNat('');
+    setCursorStack([null]);
+    setCurrentPage(0);
+    fetchPage(null, activeSearch, sortBy, '', '');
+  }
 
   // ── Chunked import ────────────────────────────────────────
   async function handleFile(file: File) {
@@ -181,7 +249,6 @@ export default function LegacyPage() {
 
     abortRef.current = false;
 
-    // 1. Read & parse
     setProgress({ phase: 'reading', totalRecords: 0, totalBatches: 0, batchDone: 0,
       recordsDone: 0, imported: 0, skipped: 0, fileName: file.name, startedAt: Date.now() });
 
@@ -204,7 +271,6 @@ export default function LegacyPage() {
       return;
     }
 
-    // 2. Split into chunks and import in parallel groups
     const batches       = chunk(records, BATCH_SIZE);
     const token         = await auth.currentUser?.getIdToken() ?? '';
     let   totalImported = 0;
@@ -213,18 +279,13 @@ export default function LegacyPage() {
     let   recordsDone   = 0;
 
     setProgress(p => p ? {
-      ...p,
-      phase: 'importing',
-      totalRecords: records.length,
-      totalBatches: batches.length,
+      ...p, phase: 'importing', totalRecords: records.length, totalBatches: batches.length,
     } : null);
 
-    // Send PARALLEL batches at a time — each wave awaited before the next
     for (let i = 0; i < batches.length; i += PARALLEL) {
       if (abortRef.current) break;
 
       const wave = batches.slice(i, i + PARALLEL);
-
       const results = await Promise.all(wave.map(async (batchRecords) => {
         try {
           const res  = await fetch('/api/legacy-cv', {
@@ -233,11 +294,8 @@ export default function LegacyPage() {
             body:    JSON.stringify({ records: batchRecords }),
           });
           const json = await res.json() as { success: boolean; imported?: number; skipped?: number; error?: string };
-          if (json.success) {
-            return { imported: json.imported ?? 0, skipped: json.skipped ?? 0, count: batchRecords.length };
-          }
-          return { imported: 0, skipped: batchRecords.length, count: batchRecords.length,
-            error: json.error ?? 'Server error' };
+          if (json.success) return { imported: json.imported ?? 0, skipped: json.skipped ?? 0, count: batchRecords.length };
+          return { imported: 0, skipped: batchRecords.length, count: batchRecords.length, error: json.error ?? 'Server error' };
         } catch (err) {
           return { imported: 0, skipped: batchRecords.length, count: batchRecords.length,
             error: err instanceof Error ? err.message : 'Network error' };
@@ -251,22 +309,38 @@ export default function LegacyPage() {
         recordsDone   += r.count;
       }
 
-      setProgress(p => p ? {
-        ...p, batchDone, recordsDone, imported: totalImported, skipped: totalSkipped,
-      } : null);
+      setProgress(p => p ? { ...p, batchDone, recordsDone, imported: totalImported, skipped: totalSkipped } : null);
     }
 
-    // 3. Done (or stopped) — refresh the list
     const wasStopped = abortRef.current;
-    setProgress(p => p ? {
-      ...p,
-      phase:    wasStopped ? 'stopped' : 'done',
-      imported: totalImported,
-      skipped:  totalSkipped,
-    } : null);
+    setProgress(p => p ? { ...p, phase: wasStopped ? 'stopped' : 'done', imported: totalImported, skipped: totalSkipped } : null);
     setCursorStack([null]);
     setCurrentPage(0);
-    fetchPage(null, activeSearch, sortBy);
+    fetchPage(null, activeSearch, sortBy, rankFilter, activeNat);
+  }
+
+  // ── Reindex existing records ──────────────────────────────
+  async function runReindex() {
+    setReindexState('running');
+    setReindexResult(null);
+    try {
+      const token = await auth.currentUser?.getIdToken() ?? '';
+      const res   = await fetch('/api/legacy-cv/reindex', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json() as { success: boolean; processed?: number; updated?: number; error?: string };
+      if (json.success) {
+        setReindexState('done');
+        setReindexResult({ processed: json.processed ?? 0, updated: json.updated ?? 0 });
+        // Refresh list so filters now work
+        fetchPage(null, activeSearch, sortBy, rankFilter, activeNat);
+      } else {
+        setReindexState('error');
+      }
+    } catch {
+      setReindexState('error');
+    }
   }
 
   // ── Drag handlers ─────────────────────────────────────────
@@ -284,33 +358,22 @@ export default function LegacyPage() {
     const newPage = currentPage + 1;
     setCursorStack(s => { const c = [...s]; c[newPage] = pageData.nextId; return c; });
     setCurrentPage(newPage);
-    fetchPage(pageData.nextId, activeSearch, sortBy);
+    fetchPage(pageData.nextId, activeSearch, sortBy, rankFilter, activeNat);
   }
   function goPrev() {
     if (currentPage === 0) return;
     const prev = currentPage - 1;
     setCurrentPage(prev);
-    fetchPage(cursorStack[prev] ?? null, activeSearch, sortBy);
+    fetchPage(cursorStack[prev] ?? null, activeSearch, sortBy, rankFilter, activeNat);
   }
 
   const total   = pageData?.total ?? 0;
-  const showing = pageData?.records.length ?? 0;
+  const records = pageData?.records ?? [];
+  const showing = records.length;
   const from    = currentPage * PAGE_LIMIT + 1;
   const to      = currentPage * PAGE_LIMIT + showing;
-  const records = pageData?.records ?? [];
 
-  // ── Derive filter options from current page ───────────────
-  const pageRanks = Array.from(new Set(records.map(r => r.rank).filter(Boolean))).sort() as string[];
-  const pageNats  = Array.from(new Set(records.map(r => r.nationality).filter(Boolean))).sort() as string[];
-
-  // ── Client-side filtered records ──────────────────────────
-  const filteredRecords = records.filter(cv => {
-    if (rankFilter && cv.rank?.toLowerCase() !== rankFilter.toLowerCase()) return false;
-    if (natFilter && cv.nationality?.toLowerCase() !== natFilter.toLowerCase()) return false;
-    return true;
-  });
-
-  const activeFilterCount = (rankFilter ? 1 : 0) + (natFilter ? 1 : 0);
+  const activeFilterCount = (rankFilter ? 1 : 0) + (activeNat ? 1 : 0);
 
   const isImporting = progress?.phase === 'importing' || progress?.phase === 'reading' || progress?.phase === 'stopping';
   const pct = progress && progress.totalBatches > 0
@@ -361,12 +424,36 @@ export default function LegacyPage() {
                   </p>
                 )}
               </div>
-              <button
-                onClick={() => fileInput.current?.click()}
-                className="shrink-0 rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 transition-colors"
-              >
-                Browse File
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Reindex button — fixes rank/nat filters on old imported records */}
+                <button
+                  onClick={runReindex}
+                  disabled={reindexState === 'running'}
+                  title="Backfill rank/nationality index fields on existing records so filters work correctly"
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors',
+                    reindexState === 'done'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : reindexState === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-600'
+                        : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-primary-300 hover:text-primary-600',
+                  )}
+                >
+                  {reindexState === 'running'
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reindexing…</>
+                    : reindexState === 'done'
+                      ? <><CheckCircle2 className="h-3.5 w-3.5" /> {reindexResult ? `${reindexResult.updated.toLocaleString()} updated` : 'Done'}</>
+                      : reindexState === 'error'
+                        ? <><XCircle className="h-3.5 w-3.5" /> Failed</>
+                        : <><RefreshCw className="h-3.5 w-3.5" /> Fix Filters</>}
+                </button>
+                <button
+                  onClick={() => fileInput.current?.click()}
+                  className="rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 transition-colors"
+                >
+                  Browse File
+                </button>
+              </div>
             </div>
           )}
 
@@ -384,7 +471,6 @@ export default function LegacyPage() {
           {/* ── Importing / Stopping phase ── */}
           {(progress?.phase === 'importing' || progress?.phase === 'stopping') && (
             <div className="p-5 space-y-3">
-              {/* Header row */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <FileJson className={cn('h-5 w-5 shrink-0', progress.phase === 'stopping' ? 'text-amber-500' : 'text-primary-500')} />
@@ -405,10 +491,7 @@ export default function LegacyPage() {
                   <ElapsedTimer startedAt={progress.startedAt} />
                   {progress.phase !== 'stopping' && (
                     <button
-                      onClick={() => {
-                        abortRef.current = true;
-                        setProgress(p => p ? { ...p, phase: 'stopping' } : null);
-                      }}
+                      onClick={() => { abortRef.current = true; setProgress(p => p ? { ...p, phase: 'stopping' } : null); }}
                       className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
                     >
                       Stop
@@ -416,11 +499,7 @@ export default function LegacyPage() {
                   )}
                 </div>
               </div>
-
-              {/* Progress bar */}
               <ProgressBar pct={pct} />
-
-              {/* Live counters */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 text-center">
                   <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Processed</p>
@@ -438,22 +517,15 @@ export default function LegacyPage() {
                   <p className="text-lg font-bold text-amber-700 mt-0.5">{progress.skipped.toLocaleString()}</p>
                 </div>
               </div>
-
-              {/* Batch progress dots (show last 20 batches) */}
               {progress.totalBatches <= 60 && (
                 <div className="flex flex-wrap gap-1 pt-1">
                   {Array.from({ length: progress.totalBatches }).map((_, i) => (
-                    <div
-                      key={i}
-                      className={cn(
-                        'h-1.5 rounded-full transition-all duration-300',
-                        i < progress.batchDone
-                          ? 'bg-primary-500 w-4'
-                          : i === progress.batchDone
-                            ? 'bg-primary-300 w-4 animate-pulse'
-                            : 'bg-slate-200 w-2',
-                      )}
-                    />
+                    <div key={i} className={cn(
+                      'h-1.5 rounded-full transition-all duration-300',
+                      i < progress.batchDone ? 'bg-primary-500 w-4'
+                        : i === progress.batchDone ? 'bg-primary-300 w-4 animate-pulse'
+                        : 'bg-slate-200 w-2',
+                    )} />
                   ))}
                 </div>
               )}
@@ -486,20 +558,14 @@ export default function LegacyPage() {
                   <button
                     onClick={() => { setProgress(null); fileInput.current?.click(); }}
                     className="rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 transition-colors"
-                  >
-                    Start Over
-                  </button>
+                  >Start Over</button>
                   <button
                     onClick={() => setProgress(null)}
                     className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
-                  >
-                    Dismiss
-                  </button>
+                  >Dismiss</button>
                 </div>
               </div>
-              <div className="mt-4">
-                <ProgressBar pct={pct} />
-              </div>
+              <div className="mt-4"><ProgressBar pct={pct} /></div>
             </div>
           )}
 
@@ -527,13 +593,9 @@ export default function LegacyPage() {
                 <button
                   onClick={() => { setProgress(null); fileInput.current?.click(); }}
                   className="shrink-0 rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 transition-colors"
-                >
-                  Import More
-                </button>
+                >Import More</button>
               </div>
-              <div className="mt-4">
-                <ProgressBar pct={100} />
-              </div>
+              <div className="mt-4"><ProgressBar pct={100} /></div>
             </div>
           )}
 
@@ -542,70 +604,54 @@ export default function LegacyPage() {
             type="file"
             accept=".json,application/json"
             className="hidden"
-            onChange={e => {
-              const f = e.target.files?.[0];
-              if (f) handleFile(f);
-              e.target.value = '';
-            }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
           />
         </div>
 
-        {/* ── Search + stats ────────────────────────────────── */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search by name…"
-              value={searchInput}
-              onChange={e => setSearchInput(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
-            />
-            {searchInput && (
-              <button
-                onClick={() => setSearchInput('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-xs"
-              >✕</button>
-            )}
-          </div>
-          <div className="flex items-center gap-3 text-xs text-slate-400 font-medium">
-            {activeFilterCount > 0 && (
-              <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-primary-600 text-white text-[10px] font-bold">
-                {activeFilterCount}
-              </span>
-            )}
-            {total > 0 && (
-              <span className="flex items-center gap-1">
-                <Users className="h-3.5 w-3.5" />
-                {activeSearch
-                  ? `${total.toLocaleString()} match${total !== 1 ? 'es' : ''}`
-                  : `${total.toLocaleString()} total records`}
-                {activeFilterCount > 0 && filteredRecords.length !== records.length && (
-                  <span className="text-primary-500 font-semibold ml-1">
-                    · {filteredRecords.length} shown
-                  </span>
-                )}
-              </span>
-            )}
-            {loading && (
-              <span className="flex items-center gap-1.5 text-primary-500">
-                <Loader2 className="h-3 w-3 animate-spin" /> Loading…
-              </span>
-            )}
-          </div>
-        </div>
+        {/* ── Filter + Sort bar ─────────────────────────────── */}
+        <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3 space-y-3">
 
-        {/* ── Filter bar ── */}
-        {(pageRanks.length > 0 || pageNats.length > 0) && (
-          <div className="flex flex-wrap items-start gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3">
+          {/* Row 1: Search + Sort + Nat */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Name search */}
+            <div className="relative flex-1 min-w-[180px] max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search by name…"
+                value={searchInput}
+                onChange={e => setSearchInput(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+              />
+              {searchInput && (
+                <button onClick={() => setSearchInput('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-xs">✕</button>
+              )}
+            </div>
+
+            {/* Nationality filter input */}
+            <div className="relative min-w-[150px]">
+              <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Nationality…"
+                value={natInput}
+                onChange={e => setNatInput(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              />
+              {natInput && (
+                <button onClick={() => { setNatInput(''); setActiveNat(''); setCursorStack([null]); setCurrentPage(0); fetchPage(null, activeSearch, sortBy, rankFilter, ''); }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-xs">✕</button>
+              )}
+            </div>
 
             {/* Sort */}
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Sort</span>
+            <div className="flex items-center gap-2 ml-auto">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide hidden sm:block">Sort</span>
               <select
                 value={sortBy}
-                onChange={e => { setSortBy(e.target.value as typeof sortBy); setCursorStack([null]); setCurrentPage(0); }}
-                className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 focus:outline-none focus:border-primary-400"
+                onChange={e => setSortBy(e.target.value as typeof sortBy)}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-primary-400"
               >
                 <option value="newest">Newest first</option>
                 <option value="name_az">Name A → Z</option>
@@ -613,65 +659,55 @@ export default function LegacyPage() {
               </select>
             </div>
 
-            {/* Divider */}
-            {pageRanks.length > 0 && <div className="hidden sm:block w-px self-stretch bg-slate-100" />}
+            {/* Stats + loading */}
+            <div className="flex items-center gap-2 text-xs text-slate-400 font-medium shrink-0">
+              {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary-500" />}
+              {total > 0 && (
+                <span className="flex items-center gap-1">
+                  <Users className="h-3.5 w-3.5" />
+                  {activeSearch || rankFilter || activeNat
+                    ? `${total.toLocaleString()} match${total !== 1 ? 'es' : ''}`
+                    : `${total.toLocaleString()} total`}
+                </span>
+              )}
+              {activeFilterCount > 0 && (
+                <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-primary-600 text-white text-[10px] font-bold">
+                  {activeFilterCount}
+                </span>
+              )}
+            </div>
+          </div>
 
-            {/* Rank chips */}
-            {pageRanks.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 flex-1">
-                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide shrink-0">Rank</span>
-                {pageRanks.slice(0, 8).map(r => (
-                  <button
-                    key={r}
-                    onClick={() => setRankFilter(f => f === r ? '' : r)}
-                    className={cn(
-                      'rounded-full px-2.5 py-0.5 text-[11px] font-semibold border transition-colors',
-                      rankFilter === r
-                        ? 'bg-primary-600 text-white border-primary-600'
-                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-primary-300 hover:text-primary-600',
-                    )}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Nationality chips */}
-            {pageNats.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide shrink-0">Country</span>
-                {pageNats.slice(0, 5).map(n => (
-                  <button
-                    key={n}
-                    onClick={() => setNatFilter(f => f === n ? '' : n)}
-                    className={cn(
-                      'rounded-full px-2.5 py-0.5 text-[11px] font-semibold border transition-colors',
-                      natFilter === n
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600',
-                    )}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Clear filters */}
-            {(rankFilter || natFilter) && (
+          {/* Row 2: Rank chips */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide shrink-0 mr-1">Rank</span>
+            {MARITIME_RANKS.map(r => (
               <button
-                onClick={() => { setRankFilter(''); setNatFilter(''); }}
-                className="ml-auto text-[11px] font-semibold text-slate-400 hover:text-red-500 transition-colors shrink-0"
+                key={r}
+                onClick={() => toggleRank(r)}
+                className={cn(
+                  'rounded-full px-2.5 py-0.5 text-[11px] font-semibold border transition-colors',
+                  rankFilter === r
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-primary-300 hover:text-primary-600',
+                )}
               >
-                ✕ Clear filters
+                {r}
+              </button>
+            ))}
+            {(rankFilter || activeNat) && (
+              <button
+                onClick={clearFilters}
+                className="ml-2 text-[11px] font-semibold text-slate-400 hover:text-red-500 transition-colors"
+              >
+                ✕ Clear
               </button>
             )}
           </div>
-        )}
+        </div>
 
         {/* ── Records list ─────────────────────────────────── */}
-        {!loading && records.length === 0 && total === 0 && !activeSearch ? (
+        {!loading && records.length === 0 && total === 0 && !activeSearch && !rankFilter && !activeNat ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
             <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-slate-100">
               <Archive className="h-10 w-10 text-slate-300" />
@@ -683,17 +719,12 @@ export default function LegacyPage() {
               </p>
             </div>
           </div>
-        ) : !loading && records.length === 0 && activeSearch ? (
+        ) : !loading && records.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-slate-400 text-sm gap-2">
             <Search className="h-8 w-8 text-slate-200" />
-            <p>No records match &ldquo;{searchInput}&rdquo;</p>
-          </div>
-        ) : !loading && filteredRecords.length === 0 && records.length > 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-slate-400 text-sm gap-2">
-            <Search className="h-8 w-8 text-slate-200" />
-            <p>No results match filters</p>
+            <p>No records match the current filters</p>
             <button
-              onClick={() => { setRankFilter(''); setNatFilter(''); }}
+              onClick={clearFilters}
               className="mt-1 text-xs font-semibold text-primary-500 hover:text-primary-700 transition-colors"
             >
               Clear filters
@@ -702,7 +733,7 @@ export default function LegacyPage() {
         ) : (
           <AnimatePresence mode="popLayout">
             <div className="grid gap-3">
-              {filteredRecords.map((cv, idx) => (
+              {records.map((cv, idx) => (
                 <motion.div
                   key={cv.id}
                   initial={{ opacity: 0, y: 8 }}
