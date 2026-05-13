@@ -373,10 +373,21 @@ export async function adminGetLegacyCvsPaged(
   const countSnap = await baseQ.count().get();
   const total     = countSnap.data().count;
 
+  // ── orderBy rules (no composite indexes required) ─────────────────────────
+  // Firestore needs a composite index when orderBy field ≠ equality-filter field.
+  // Rule: always orderBy the LEADING equality filter field when one is active.
+  // Name range (>=/<= on nameLower) always forces orderBy('nameLower').
+  // When no filter is active, honour the user's sort preference.
   let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
   if (q_term) {
-    // Name range active — must order by nameLower first
+    // Name range query — must orderBy nameLower (Firestore requirement)
     q = baseQ.orderBy('nameLower', sort === 'name_za' ? 'desc' : 'asc').limit(limit + 1);
+  } else if (q_rank) {
+    // Rank equality filter — orderBy rankLower (same field → single-field index, no composite)
+    q = baseQ.orderBy('rankLower', 'asc').limit(limit + 1);
+  } else if (q_nat) {
+    // Nationality equality filter — orderBy nationalityLower (same field → single-field index)
+    q = baseQ.orderBy('nationalityLower', 'asc').limit(limit + 1);
   } else if (sort === 'name_az') {
     q = baseQ.orderBy('nameLower', 'asc').limit(limit + 1);
   } else if (sort === 'name_za') {

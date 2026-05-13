@@ -143,6 +143,7 @@ export default function LegacyPage() {
   const [activeNat,     setActiveNat]     = useState('');
   const [reindexState,  setReindexState]  = useState<ReindexState>('idle');
   const [reindexResult, setReindexResult] = useState<{ processed: number; updated: number } | null>(null);
+  const [fetchError,    setFetchError]    = useState<string | null>(null);
 
   const abortRef    = useRef(false);
   const dragCount   = useRef(0);
@@ -159,6 +160,7 @@ export default function LegacyPage() {
     nat: string,
   ) => {
     setLoading(true);
+    setFetchError(null);
     try {
       const token  = await auth.currentUser?.getIdToken() ?? '';
       const params = new URLSearchParams({ limit: String(PAGE_LIMIT), sort });
@@ -169,10 +171,15 @@ export default function LegacyPage() {
       const res  = await fetch(`/api/legacy-cv?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const json = await res.json() as { success: boolean; data?: PageData };
-      if (json.success && json.data) setPageData(json.data);
+      const json = await res.json() as { success: boolean; data?: PageData; error?: string };
+      if (json.success && json.data) {
+        setPageData(json.data);
+      } else if (!json.success) {
+        setFetchError(json.error ?? 'Failed to load records');
+      }
     } catch (err) {
       console.error('[legacy page] fetch error', err);
+      setFetchError(err instanceof Error ? err.message : 'Network error');
     } finally {
       setLoading(false);
     }
@@ -705,6 +712,25 @@ export default function LegacyPage() {
             )}
           </div>
         </div>
+
+        {/* ── Fetch error banner ───────────────────────────── */}
+        {fetchError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-3">
+            <XCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-red-700">Failed to load records</p>
+              <p className="text-xs text-red-500 mt-0.5 break-all">{fetchError}</p>
+              {fetchError.includes('index') && (
+                <p className="text-xs text-red-600 font-medium mt-1">
+                  ⚠️ Firestore index missing — check Vercel logs for a link to create the index, or click &quot;Fix Filters&quot; to rebuild index fields on existing records.
+                </p>
+              )}
+            </div>
+            <button onClick={clearFilters} className="shrink-0 text-xs font-semibold text-red-600 hover:text-red-800">
+              Clear filters
+            </button>
+          </div>
+        )}
 
         {/* ── Records list ─────────────────────────────────── */}
         {!loading && records.length === 0 && total === 0 && !activeSearch && !rankFilter && !activeNat ? (

@@ -98,11 +98,18 @@ export async function GET(req: NextRequest) {
     const rank    = searchParams.get('rank') ?? undefined;
     const nat     = searchParams.get('nat')  ?? undefined;
 
-    const data = await adminGetLegacyCvsPaged(limit, afterId, search, sort, rank, nat);
-
-    return NextResponse.json({ success: true, data });
+    try {
+      const data = await adminGetLegacyCvsPaged(limit, afterId, search, sort, rank, nat);
+      return NextResponse.json({ success: true, data });
+    } catch (queryErr) {
+      // Log the full Firestore error — if an index is missing, this will show the
+      // URL to create the composite index in the Firebase console.
+      console.error('[legacy-cv GET] Firestore query error:', queryErr);
+      const msg = queryErr instanceof Error ? queryErr.message : 'Query failed';
+      return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    }
   } catch (err) {
-    console.error('[legacy-cv GET]', err);
+    console.error('[legacy-cv GET] Unexpected error:', err);
     return NextResponse.json({ success: false, error: 'Fetch failed' }, { status: 500 });
   }
 }

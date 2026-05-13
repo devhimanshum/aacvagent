@@ -108,13 +108,18 @@ async function processSingleAttachment(
       console.log(`[Process] Duplicate rejected: ${aiResult.name} <${aiResult.email}>`);
       // Persist this attachment as a known duplicate so future runs skip it
       // BEFORE AI — no API cost on repeat encounters, even if outlook ID changes.
-      adminSaveKnownDuplicate({
-        attachmentId:   attachmentId,
-        candidateEmail: aiResult.email,
-        candidateName:  aiResult.name || '',
-        outlookEmailId: emailId,
-        fileName:       name || fileName,
-      }).catch(() => { /* fire-and-forget, never block the response */ });
+      // Must await — if fire-and-forget fails silently the email keeps reprocessing.
+      try {
+        await adminSaveKnownDuplicate({
+          attachmentId:   attachmentId,
+          candidateEmail: aiResult.email,
+          candidateName:  aiResult.name || '',
+          outlookEmailId: emailId,
+          fileName:       name || fileName,
+        });
+      } catch (saveErr) {
+        console.error('[Process] Failed to save known duplicate — will retry AI next run:', saveErr);
+      }
       return {
         emailId,
         status:  'skipped',
