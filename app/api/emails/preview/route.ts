@@ -5,6 +5,7 @@ import { adminIsEmailProcessed } from '@/lib/firebase/admin-firestore';
 
 export interface PreviewEmail {
   id: string;
+  internetMessageId?: string;
   subject: string;
   senderName: string;
   senderEmail: string;
@@ -30,16 +31,19 @@ export async function GET(req: NextRequest) {
 
     for (let i = 0; i < withAttachments.length; i += BATCH) {
       const batch = withAttachments.slice(i, i + BATCH);
-      const processed = await Promise.all(batch.map(e => adminIsEmailProcessed(e.id)));
+      const processed = await Promise.all(
+        batch.map(e => adminIsEmailProcessed(e.id, e.internetMessageId)),
+      );
       batch.forEach((e, idx) => {
         results.push({
-          id:             e.id,
-          subject:        e.subject || '(No Subject)',
-          senderName:     e.from?.emailAddress?.name  || '',
-          senderEmail:    e.from?.emailAddress?.address || '',
-          receivedAt:     e.receivedDateTime,
-          hasAttachments: true,
-          isProcessed:    processed[idx],
+          id:               e.id,
+          internetMessageId: e.internetMessageId,
+          subject:          e.subject || '(No Subject)',
+          senderName:       e.from?.emailAddress?.name  || '',
+          senderEmail:      e.from?.emailAddress?.address || '',
+          receivedAt:       e.receivedDateTime,
+          hasAttachments:   true,
+          isProcessed:      processed[idx],
         });
       });
     }

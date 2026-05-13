@@ -132,6 +132,8 @@ export interface OutlookEmail {
   bodyPreview?: string;
   body?: { content: string; contentType: 'html' | 'text' };
   attachments?: (EmailAttachment & { isCVFile?: boolean })[];
+  /** Stable SMTP Message-ID — never changes across Graph API sessions */
+  internetMessageId?: string;
   // enriched on server
   processed?: boolean;
   processedRecord?: ProcessedEmail | null;
@@ -140,6 +142,8 @@ export interface OutlookEmail {
 export interface ProcessedEmail {
   id: string;
   outlookId: string;
+  /** Stable SMTP Message-ID — used as secondary lookup key when mutable outlookId changes */
+  internetMessageId?: string;
   subject: string;
   senderName: string;
   senderEmail: string;

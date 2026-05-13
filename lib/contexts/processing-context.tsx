@@ -145,7 +145,10 @@ export function ProcessingProvider({ children, onComplete }: Props) {
         const res = await apiClient.post<{
           success: boolean;
           data?: { status: string; message?: string };
-        }>('/api/emails/process', { emailId: emails[i].id });
+        }>('/api/emails/process', {
+          emailId:          emails[i].id,
+          internetMessageId: emails[i].internetMessageId,
+        });
 
         const s = res.data?.status;
         const msg = res.data?.message;

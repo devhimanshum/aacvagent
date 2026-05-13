@@ -197,14 +197,30 @@ export async function adminSaveKnownDuplicate(data: {
 }
 
 // ── Processed Emails ──────────────────────────────────────────
-export async function adminIsEmailProcessed(outlookId: string): Promise<boolean> {
-  const db   = adminDb();
-  const snap = await db
-    .collection(C.PROCESSED_EMAILS)
-    .where('outlookId', '==', outlookId)
-    .limit(1)
-    .get();
-  return !snap.empty;
+/**
+ * Returns true if the email was already processed.
+ * Checks by BOTH the mutable outlookId AND the stable internetMessageId,
+ * because Microsoft Graph can return different mutable IDs for the same email
+ * across different API sessions.
+ */
+export async function adminIsEmailProcessed(
+  outlookId: string,
+  internetMessageId?: string,
+): Promise<boolean> {
+  const db  = adminDb();
+  const col = db.collection(C.PROCESSED_EMAILS);
+
+  // Primary check — mutable ID (fast, works for most cases)
+  const snap1 = await col.where('outlookId', '==', outlookId).limit(1).get();
+  if (!snap1.empty) return true;
+
+  // Secondary check — stable SMTP Message-ID (catches cases where Graph ID changed)
+  if (internetMessageId) {
+    const snap2 = await col.where('internetMessageId', '==', internetMessageId).limit(1).get();
+    if (!snap2.empty) return true;
+  }
+
+  return false;
 }
 
 export async function adminSaveProcessedEmail(email: Omit<ProcessedEmail, 'id'>): Promise<string> {

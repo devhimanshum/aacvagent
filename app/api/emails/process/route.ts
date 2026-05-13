@@ -201,25 +201,31 @@ async function markProcessed(
 }
 
 async function processEmail(
-  emailId:      string,
-  emailSubject: string,
-  senderEmail:  string,
-  senderName:   string,
-  receivedAt:   string,
-  rankConfig?:  RankConfig | null,
+  emailId:            string,
+  emailSubject:       string,
+  senderEmail:        string,
+  senderName:         string,
+  receivedAt:         string,
+  rankConfig?:        RankConfig | null,
+  internetMessageId?: string,
 ): Promise<ProcessEmailResult> {
-  // Skip if this email was already fully processed
-  if (await adminIsEmailProcessed(emailId)) {
+  // Skip if this email was already fully processed.
+  // Check by both the mutable outlookId AND the stable internetMessageId so
+  // the lookup succeeds even when Microsoft Graph returns a different mutable ID.
+  if (await adminIsEmailProcessed(emailId, internetMessageId)) {
     return { emailId, status: 'skipped', message: 'Already processed' };
   }
 
   // Fetch attachments — if this throws we still mark it processed so it never retries forever
+  // Shorthand — always include internetMessageId in processedEmails for stable future lookups
+  const stableExtra = internetMessageId ? { internetMessageId } : {};
+
   let attachments: Awaited<ReturnType<typeof fetchEmailAttachments>>;
   try {
     attachments = await fetchEmailAttachments(emailId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Could not fetch attachments';
-    await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt, 'error', { errorMessage: msg });
+    await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt, 'error', { ...stableExtra, errorMessage: msg });
     return { emailId, status: 'error', message: msg };
   }
 
@@ -227,7 +233,7 @@ async function processEmail(
 
   if (cvAttachments.length === 0) {
     await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt,
-      'skipped', { errorMessage: 'No PDF/DOCX attachment found' });
+      'skipped', { ...stableExtra, errorMessage: 'No PDF/DOCX attachment found' });
     return { emailId, status: 'skipped', message: 'No CV attachment found' };
   }
 
@@ -244,6 +250,7 @@ async function processEmail(
     // Every attachment in this email was already identified as a duplicate — skip entirely
     await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt,
       'skipped', {
+        ...stableExtra,
         attachmentName: cvAttachments.map(a => a.name).join(', '),
         errorMessage:   `All ${preSkipCount} CV${preSkipCount > 1 ? 's' : ''} already known as duplicates`,
       });
@@ -291,6 +298,7 @@ async function processEmail(
 
   await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt,
     finalStatus, {
+      ...stableExtra,
       candidateId:    successResult?.candidateId,
       attachmentName: cvAttachments.map(a => a.name).join(', '),
       errorMessage:   successResult ? undefined : attResults.map(r => r.message).join('; '),
@@ -320,8 +328,11 @@ export async function POST(req: NextRequest) {
   if (!uid) return unauthorized();
 
   try {
-    const body     = await req.json().catch(() => ({}));
-    const { emailId } = body;
+    const body = await req.json().catch(() => ({}));
+    const { emailId, internetMessageId: bodyMsgId } = body as {
+      emailId?: string;
+      internetMessageId?: string;
+    };
 
     // Fetch rank config once for the whole batch
     const rankConfig = await adminGetRankConfig();
@@ -335,18 +346,21 @@ export async function POST(req: NextRequest) {
         // fetchEmailById failed — mark as processed so this email stops retrying forever
         const msg = err instanceof Error ? err.message : 'Could not fetch email';
         await markProcessed(emailId, '(unknown)', '', '', new Date().toISOString(), 'error',
-          { errorMessage: msg });
+          { internetMessageId: bodyMsgId, errorMessage: msg });
         return NextResponse.json({ success: true, data: { emailId, status: 'error', message: msg } });
       }
 
       // Use the original `emailId` (from the preview/client), NOT email.id from the
       // Graph response — they can differ and cause the processedEmails lookup to miss.
+      // Use internetMessageId from body (client-sent) or from fetched email as stable key.
+      const stableMsgId = bodyMsgId || email.internetMessageId;
       const result = await processEmail(
         emailId, email.subject,
         email.from.emailAddress.address,
         email.from.emailAddress.name,
         email.receivedDateTime,
         rankConfig,
+        stableMsgId,
       );
       return NextResponse.json({ success: true, data: result });
     }
@@ -364,6 +378,7 @@ export async function POST(req: NextRequest) {
           email.from.emailAddress.name,
           email.receivedDateTime,
           rankConfig,
+          email.internetMessageId,   // stable SMTP id — never changes between sessions
         ));
       } catch (err) {
         results.push({

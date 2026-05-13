@@ -6,9 +6,11 @@ const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const TOKEN_URL  = (tenantId: string) =>
   `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
 
-// Fields fetched for every email in a list view
+// Fields fetched for every email in a list view.
+// internetMessageId = stable SMTP Message-ID header — never changes between sessions,
+// unlike the mutable Graph 'id' field which can differ across API calls for the same email.
 const EMAIL_LIST_SELECT =
-  'id,subject,from,toRecipients,receivedDateTime,hasAttachments,isRead,bodyPreview,importance,isDraft';
+  'id,internetMessageId,subject,from,toRecipients,receivedDateTime,hasAttachments,isRead,bodyPreview,importance,isDraft';
 
 async function getOutlookConfig() {
   const stored = await getOutlookSettings();
