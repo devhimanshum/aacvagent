@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Archive, Upload, Search, ChevronLeft, ChevronRight,
   Globe, Users, CheckCircle2, XCircle, Loader2, FileJson,
-  SlidersHorizontal, ChevronDown, ChevronUp, Anchor, ArrowUpDown, X,
+  SlidersHorizontal, ChevronDown, ChevronUp, Anchor, X,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { EmailLink, PhoneLink } from '@/components/ui/ContactLink';
@@ -114,14 +114,12 @@ interface LegacyFilterState {
   search:        string;
   selectedRanks: string[];
   selectedNats:  string[];
-  sort:          'newest' | 'name_az' | 'name_za';
 }
 
 const DEFAULT_FILTERS: LegacyFilterState = {
   search:        '',
   selectedRanks: [],
   selectedNats:  [],
-  sort:          'newest',
 };
 
 // ── Small sub-components ──────────────────────────────────────
@@ -162,8 +160,7 @@ function LegacyCvFilters({
   const activeCount =
     (filters.search ? 1 : 0) +
     (filters.selectedRanks.length > 0 ? 1 : 0) +
-    (filters.selectedNats.length > 0 ? 1 : 0) +
-    (filters.sort !== 'newest' ? 1 : 0);
+    (filters.selectedNats.length > 0 ? 1 : 0);
 
   const hasActive = activeCount > 0;
 
@@ -344,19 +341,6 @@ function LegacyCvFilters({
             )}
           </div>
 
-          {/* Sort section */}
-          <div className="border-t border-slate-100 pt-4">
-            <FLabel icon={ArrowUpDown}>Sort</FLabel>
-            <select
-              value={filters.sort}
-              onChange={e => set('sort', e.target.value as LegacyFilterState['sort'])}
-              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:border-primary-300"
-            >
-              <option value="newest">Newest first</option>
-              <option value="name_az">Name A → Z</option>
-              <option value="name_za">Name Z → A</option>
-            </select>
-          </div>
         </div>
       )}
 
@@ -369,12 +353,6 @@ function LegacyCvFilters({
           {filters.selectedNats.map(n => (
             <ActiveChip key={n} label={n} onRemove={() => toggleNat(n)} />
           ))}
-          {filters.sort !== 'newest' && (
-            <ActiveChip
-              label={filters.sort === 'name_az' ? 'Name A → Z' : 'Name Z → A'}
-              onRemove={() => set('sort', 'newest')}
-            />
-          )}
         </div>
       )}
     </div>
@@ -404,7 +382,7 @@ export default function LegacyPage() {
   const prevFilters = useRef<LegacyFilterState>(DEFAULT_FILTERS);
 
   // ── Load nationality options from API ─────────────────────
-  const loadOptions = useCallback(async () => {
+  const loadOptions = useCallback(async (triggerReindexIfEmpty = false) => {
     setNatsLoading(true);
     try {
       const token = await auth.currentUser?.getIdToken() ?? '';
@@ -412,7 +390,26 @@ export default function LegacyPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json  = await res.json() as { success: boolean; nationalities?: string[]; ranks?: string[] };
-      if (json.success) setNationalities(json.nationalities ?? []);
+      if (json.success) {
+        const nats = json.nationalities ?? [];
+        setNationalities(nats);
+        // If meta doc is empty (reindex never ran or failed to save), kick it off now.
+        if (nats.length === 0 && triggerReindexIfEmpty) {
+          setReindexState('running');
+          const t2 = await auth.currentUser?.getIdToken() ?? '';
+          fetch('/api/legacy-cv/reindex', { method: 'POST', headers: { Authorization: `Bearer ${t2}` } })
+            .then(r => r.json())
+            .then((j: { success: boolean; processed?: number; updated?: number }) => {
+              if (j.success) {
+                localStorage.setItem('legacyCv_reindexed_v1', '1');
+                setReindexState('done');
+                setReindexResult({ processed: j.processed ?? 0, updated: j.updated ?? 0 });
+                loadOptions(false); // reload chips now that meta doc exists
+              } else { setReindexState('idle'); }
+            })
+            .catch(() => setReindexState('idle'));
+        }
+      }
     } catch {
       // non-critical — filters still work, just won't have chips
     } finally {
@@ -420,7 +417,7 @@ export default function LegacyPage() {
     }
   }, []);
 
-  useEffect(() => { loadOptions(); }, [loadOptions]);
+  useEffect(() => { loadOptions(true); }, [loadOptions]);
 
   // ── Auto-reindex on first visit (backfills rankLower / nationalityLower) ──
   // Without these fields on existing records rank/nat filters return 0 results.
@@ -443,7 +440,7 @@ export default function LegacyPage() {
             setReindexState('done');
             setReindexResult({ processed: json.processed ?? 0, updated: json.updated ?? 0 });
             // Reload nationality options now that reindex populated the meta doc
-            loadOptions();
+            loadOptions(false);
             // Re-fetch so rank/nat filters now return results immediately
             fetchPage(null, DEFAULT_FILTERS);
           } else {
@@ -464,7 +461,7 @@ export default function LegacyPage() {
     setFetchError(null);
     try {
       const token  = await auth.currentUser?.getIdToken() ?? '';
-      const params = new URLSearchParams({ limit: String(PAGE_LIMIT), sort: f.sort });
+      const params = new URLSearchParams({ limit: String(PAGE_LIMIT), sort: 'newest' });
       if (afterId)                  params.set('afterId', afterId);
       if (f.search.trim())          params.set('search', f.search.trim());
       if (f.selectedRanks.length)   params.set('ranks', f.selectedRanks.join(','));
@@ -498,7 +495,6 @@ export default function LegacyPage() {
     // If only search changed, debounce the fetch
     const searchChanged = next.search !== prev.search;
     const otherChanged  =
-      next.sort          !== prev.sort          ||
       next.selectedRanks !== prev.selectedRanks ||
       next.selectedNats  !== prev.selectedNats;
 
@@ -511,7 +507,7 @@ export default function LegacyPage() {
         fetchPage(null, next);
       }, 350);
     } else {
-      // Chips / sort changed — fetch immediately
+      // Chips changed — fetch immediately
       if (debounceId.current) clearTimeout(debounceId.current);
       prevFilters.current = next;
       setCursorStack([null]);
