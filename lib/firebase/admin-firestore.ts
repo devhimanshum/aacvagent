@@ -3,13 +3,14 @@ import { adminDb } from './admin';
 import type { Candidate, RankConfig, ReviewStatus, OutlookSettings, GeminiSettings, ProcessedEmail, TokenUsageRecord, DailyUsageSummary, LegacyCv } from '@/types';
 
 const C = {
-  PENDING:          'candidates/pending/list',
-  SELECTED:         'candidates/selected/list',
-  UNSELECTED:       'candidates/unselected/list',
-  PROCESSED_EMAILS: 'emails/processedEmails/list',
-  CONFIG:           'config',
-  SETTINGS:         'settings',
-  LEGACY_CVS:       'legacyCvs',
+  PENDING:           'candidates/pending/list',
+  SELECTED:          'candidates/selected/list',
+  UNSELECTED:        'candidates/unselected/list',
+  PROCESSED_EMAILS:  'emails/processedEmails/list',
+  KNOWN_DUPLICATES:  'emails/knownDuplicates/list',
+  CONFIG:            'config',
+  SETTINGS:          'settings',
+  LEGACY_CVS:        'legacyCvs',
 } as const;
 
 // ── Helper: Firestore doc → plain object ──────────────────────
@@ -161,6 +162,38 @@ export async function adminCheckDuplicate(email: string): Promise<boolean> {
     if (!snap.empty) return true;
   }
   return false;
+}
+
+// ── Known Duplicates ──────────────────────────────────────────
+// Stores Outlook attachment IDs that were already found to be duplicates.
+// Outlook attachment IDs are stable (tied to the specific message), so this
+// lets us skip AI processing entirely on repeat encounters — no API cost.
+
+export async function adminIsKnownDuplicate(attachmentId: string): Promise<boolean> {
+  if (!attachmentId) return false;
+  const db   = adminDb();
+  const snap = await db
+    .collection(C.KNOWN_DUPLICATES)
+    .where('attachmentId', '==', attachmentId)
+    .limit(1)
+    .get();
+  return !snap.empty;
+}
+
+export async function adminSaveKnownDuplicate(data: {
+  attachmentId:  string;
+  candidateEmail: string;
+  candidateName:  string;
+  outlookEmailId: string;
+  fileName:       string;
+}): Promise<void> {
+  const db = adminDb();
+  // Use attachmentId as the document ID — idempotent, no duplicate docs
+  await db.collection(C.KNOWN_DUPLICATES).doc(data.attachmentId.replace(/[^a-zA-Z0-9_-]/g, '_')).set({
+    ...data,
+    detectedAt: new Date().toISOString(),
+    createdAt:  FieldValue.serverTimestamp(),
+  });
 }
 
 // ── Processed Emails ──────────────────────────────────────────

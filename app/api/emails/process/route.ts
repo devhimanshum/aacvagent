@@ -7,6 +7,8 @@ import {
   adminSaveProcessedEmail,
   adminSaveTokenUsage,
   adminGetRankConfig,
+  adminIsKnownDuplicate,
+  adminSaveKnownDuplicate,
 } from '@/lib/firebase/admin-firestore';
 import type { RankConfig } from '@/types';
 import {
@@ -104,6 +106,15 @@ async function processSingleAttachment(
     const isDuplicate = await adminCheckDuplicate(aiResult.email);
     if (isDuplicate) {
       console.log(`[Process] Duplicate rejected: ${aiResult.name} <${aiResult.email}>`);
+      // Persist this attachment as a known duplicate so future runs skip it
+      // BEFORE AI — no API cost on repeat encounters, even if outlook ID changes.
+      adminSaveKnownDuplicate({
+        attachmentId:   attachmentId,
+        candidateEmail: aiResult.email,
+        candidateName:  aiResult.name || '',
+        outlookEmailId: emailId,
+        fileName:       name || fileName,
+      }).catch(() => { /* fire-and-forget, never block the response */ });
       return {
         emailId,
         status:  'skipped',
@@ -215,9 +226,38 @@ async function processEmail(
     return { emailId, status: 'skipped', message: 'No CV attachment found' };
   }
 
-  // Process every CV attachment
+  // ── Pre-check: skip attachments already known as duplicates (no AI cost) ──
+  // Outlook attachment IDs are stable, so this is reliable across sessions even
+  // if the email's own ID changes (Microsoft Graph returns mutable IDs in batch mode).
+  const dupChecks = await Promise.all(
+    cvAttachments.map(a => adminIsKnownDuplicate(a.id)),
+  );
+  const newAttachments = cvAttachments.filter((_, i) => !dupChecks[i]);
+  const preSkipCount   = cvAttachments.length - newAttachments.length;
+
+  if (newAttachments.length === 0) {
+    // Every attachment in this email was already identified as a duplicate — skip entirely
+    await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt,
+      'skipped', {
+        attachmentName: cvAttachments.map(a => a.name).join(', '),
+        errorMessage:   `All ${preSkipCount} CV${preSkipCount > 1 ? 's' : ''} already known as duplicates`,
+      });
+    return {
+      emailId,
+      status:  'skipped',
+      message: `All ${preSkipCount} CV${preSkipCount > 1 ? 's' : ''} already in database — skipped`,
+    };
+  }
+
+  // Process only attachments not yet known as duplicates
   const attResults: (ProcessEmailResult & { name?: string })[] = [];
-  for (const att of cvAttachments) {
+
+  // Add pre-skipped ones to results for accurate summary
+  for (let i = 0; i < preSkipCount; i++) {
+    attResults.push({ emailId, status: 'skipped', message: 'Already known duplicate (pre-check)' });
+  }
+
+  for (const att of newAttachments) {
     try {
       const r = await processSingleAttachment(
         emailId, emailSubject, senderEmail, senderName, receivedAt,
@@ -235,16 +275,23 @@ async function processEmail(
 
   // Mark the email as processed (once, regardless of individual attachment outcomes)
   const successResult = attResults.find(r => r.status === 'success');
+  const skipCount     = attResults.filter(r => r.status === 'skipped').length;
+  const errCount      = attResults.filter(r => r.status === 'error').length;
+
+  // Use 'skipped' not 'error' when all were duplicates — this way retries are
+  // treated as clean skips, not failures, in the dashboard/logs.
+  const finalStatus = successResult
+    ? 'processed'
+    : errCount > 0 ? 'error' : 'skipped';
+
   await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt,
-    successResult ? 'processed' : 'error', {
+    finalStatus, {
       candidateId:    successResult?.candidateId,
       attachmentName: cvAttachments.map(a => a.name).join(', '),
       errorMessage:   successResult ? undefined : attResults.map(r => r.message).join('; '),
     });
 
   const successCount = attResults.filter(r => r.status === 'success').length;
-  const skipCount    = attResults.filter(r => r.status === 'skipped').length;
-  const errCount     = attResults.filter(r => r.status === 'error').length;
 
   if (successCount > 0) {
     const names = attResults.filter(r => r.status === 'success').map(r => r.name).filter(Boolean).join(', ');
@@ -257,7 +304,7 @@ async function processEmail(
   }
 
   if (skipCount === attResults.length) {
-    return { emailId, status: 'skipped', message: `All ${skipCount} CVs are duplicates — skipped` };
+    return { emailId, status: 'skipped', message: `All ${skipCount} CVs already in database — skipped` };
   }
 
   return { emailId, status: 'error', message: `${errCount} error${errCount > 1 ? 's' : ''} processing CVs` };
