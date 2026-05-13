@@ -168,6 +168,22 @@ async function processSingleAttachment(
   };
 }
 
+/** Save a processed-email record silently — never throws. */
+async function markProcessed(
+  outlookId: string, subject: string, senderName: string, senderEmail: string,
+  receivedAt: string, status: 'processed' | 'skipped' | 'error',
+  extra?: Partial<Parameters<typeof adminSaveProcessedEmail>[0]>,
+) {
+  try {
+    await adminSaveProcessedEmail({
+      outlookId, subject, senderName, senderEmail, receivedAt,
+      processedAt: new Date().toISOString(), status, ...extra,
+    });
+  } catch {
+    /* ignore — we never want a save failure to block the response */
+  }
+}
+
 async function processEmail(
   emailId:      string,
   emailSubject: string,
@@ -181,16 +197,21 @@ async function processEmail(
     return { emailId, status: 'skipped', message: 'Already processed' };
   }
 
-  // Find ALL CV attachments in the email
-  const attachments    = await fetchEmailAttachments(emailId);
-  const cvAttachments  = attachments.filter(a => isSupportedCVFile(a.contentType, a.name));
+  // Fetch attachments — if this throws we still mark it processed so it never retries forever
+  let attachments: Awaited<ReturnType<typeof fetchEmailAttachments>>;
+  try {
+    attachments = await fetchEmailAttachments(emailId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Could not fetch attachments';
+    await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt, 'error', { errorMessage: msg });
+    return { emailId, status: 'error', message: msg };
+  }
+
+  const cvAttachments = attachments.filter(a => isSupportedCVFile(a.contentType, a.name));
 
   if (cvAttachments.length === 0) {
-    await adminSaveProcessedEmail({
-      outlookId: emailId, subject: emailSubject, senderName, senderEmail,
-      receivedAt, processedAt: new Date().toISOString(),
-      status: 'skipped', errorMessage: 'No PDF/DOCX attachment found',
-    });
+    await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt,
+      'skipped', { errorMessage: 'No PDF/DOCX attachment found' });
     return { emailId, status: 'skipped', message: 'No CV attachment found' };
   }
 
@@ -214,20 +235,12 @@ async function processEmail(
 
   // Mark the email as processed (once, regardless of individual attachment outcomes)
   const successResult = attResults.find(r => r.status === 'success');
-  const now           = new Date().toISOString();
-  await adminSaveProcessedEmail({
-    outlookId:      emailId,
-    subject:        emailSubject,
-    senderName,
-    senderEmail,
-    receivedAt,
-    processedAt:    now,
-    status:         successResult ? 'processed' : 'skipped',
-    candidateId:    successResult?.candidateId,
-    attachmentName: cvAttachments.map(a => a.name).join(', '),
-    errorMessage:   successResult ? undefined
-      : attResults.map(r => r.message).join('; '),
-  });
+  await markProcessed(emailId, emailSubject, senderName, senderEmail, receivedAt,
+    successResult ? 'processed' : 'error', {
+      candidateId:    successResult?.candidateId,
+      attachmentName: cvAttachments.map(a => a.name).join(', '),
+      errorMessage:   successResult ? undefined : attResults.map(r => r.message).join('; '),
+    });
 
   const successCount = attResults.filter(r => r.status === 'success').length;
   const skipCount    = attResults.filter(r => r.status === 'skipped').length;
@@ -262,8 +275,18 @@ export async function POST(req: NextRequest) {
     const rankConfig = await adminGetRankConfig();
 
     if (emailId) {
-      // Single email — fetch it directly by ID, no list lookup needed
-      const email = await fetchEmailById(emailId);
+      // Single email — fetch it directly by ID
+      let email: Awaited<ReturnType<typeof fetchEmailById>>;
+      try {
+        email = await fetchEmailById(emailId);
+      } catch (err) {
+        // fetchEmailById failed — mark as processed so this email stops retrying forever
+        const msg = err instanceof Error ? err.message : 'Could not fetch email';
+        await markProcessed(emailId, '(unknown)', '', '', new Date().toISOString(), 'error',
+          { errorMessage: msg });
+        return NextResponse.json({ success: true, data: { emailId, status: 'error', message: msg } });
+      }
+
       const result = await processEmail(
         email.id, email.subject,
         email.from.emailAddress.address,
