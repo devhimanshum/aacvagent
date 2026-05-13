@@ -5,11 +5,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Archive, Upload, Search, ChevronLeft, ChevronRight,
   Globe, Users, CheckCircle2, XCircle, Loader2, FileJson, RefreshCw,
+  SlidersHorizontal, ChevronDown, ChevronUp, Anchor, ArrowUpDown, X,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { EmailLink, PhoneLink } from '@/components/ui/ContactLink';
 import { auth } from '@/lib/firebase/config';
 import { cn } from '@/lib/utils/helpers';
+import { MARITIME_RANKS } from '@/lib/utils/ranks';
 import type { LegacyCv } from '@/types';
 
 // ── Rank color ────────────────────────────────────────────────
@@ -43,26 +45,6 @@ function avatarColor(name: string): string {
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % AVATAR_COLORS.length;
   return AVATAR_COLORS[h];
 }
-
-// ── Hardcoded maritime ranks (covers 95%+ of seafarer database) ──
-const MARITIME_RANKS = [
-  'Master',
-  'Chief Officer',
-  'Second Officer',
-  'Third Officer',
-  'Chief Engineer',
-  '2nd Engineer',
-  '3rd Engineer',
-  '4th Engineer',
-  'Bosun',
-  'AB',
-  'OS',
-  'Cook',
-  'Steward',
-  'Electrician',
-  'Fitter',
-  'Motorman',
-];
 
 // ── Chunk helper ──────────────────────────────────────────────
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -127,29 +109,318 @@ function ElapsedTimer({ startedAt }: { startedAt: number }) {
 // ── Reindex state ─────────────────────────────────────────────
 type ReindexState = 'idle' | 'running' | 'done' | 'error';
 
+// ── Filter state ──────────────────────────────────────────────
+interface LegacyFilterState {
+  search:        string;
+  selectedRanks: string[];
+  selectedNats:  string[];
+  sort:          'newest' | 'name_az' | 'name_za';
+}
+
+const DEFAULT_FILTERS: LegacyFilterState = {
+  search:        '',
+  selectedRanks: [],
+  selectedNats:  [],
+  sort:          'newest',
+};
+
+// ── Small sub-components ──────────────────────────────────────
+function ActiveChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-primary-100 border border-primary-200 px-2.5 py-0.5 text-[11px] font-semibold text-primary-700 whitespace-nowrap">
+      {label}
+      <button onClick={onRemove} className="hover:text-primary-900 transition-colors">
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
+
+function FLabel({ icon: Icon, children }: { icon: React.ElementType; children: React.ReactNode }) {
+  return (
+    <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+      <Icon className="h-3 w-3" />{children}
+    </label>
+  );
+}
+
+// ── LegacyCvFilters component ─────────────────────────────────
+interface LegacyCvFiltersProps {
+  filters:       LegacyFilterState;
+  onChange:      (f: LegacyFilterState) => void;
+  totalCount:    number;
+  loading:       boolean;
+  nationalities: string[];
+  natsLoading:   boolean;
+}
+
+function LegacyCvFilters({
+  filters, onChange, totalCount, loading, nationalities, natsLoading,
+}: LegacyCvFiltersProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  const activeCount =
+    (filters.search ? 1 : 0) +
+    (filters.selectedRanks.length > 0 ? 1 : 0) +
+    (filters.selectedNats.length > 0 ? 1 : 0) +
+    (filters.sort !== 'newest' ? 1 : 0);
+
+  const hasActive = activeCount > 0;
+
+  function set<K extends keyof LegacyFilterState>(key: K, val: LegacyFilterState[K]) {
+    onChange({ ...filters, [key]: val });
+  }
+
+  function toggleRank(rank: string) {
+    const next = filters.selectedRanks.includes(rank)
+      ? filters.selectedRanks.filter(r => r !== rank)
+      : [...filters.selectedRanks, rank];
+    set('selectedRanks', next);
+  }
+
+  function toggleNat(nat: string) {
+    const next = filters.selectedNats.includes(nat)
+      ? filters.selectedNats.filter(n => n !== nat)
+      : [...filters.selectedNats, nat];
+    set('selectedNats', next);
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+
+      {/* ── Search + toggle row ── */}
+      <div className="flex items-center gap-2 px-3 py-3 flex-wrap">
+        <div className="relative flex-1 min-w-[160px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-300 pointer-events-none" />
+          <input
+            value={filters.search}
+            onChange={e => set('search', e.target.value)}
+            placeholder="Search by name…"
+            className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 placeholder:text-slate-300 focus:outline-none focus:border-primary-300 focus:bg-white transition-all"
+          />
+          {filters.search && (
+            <button onClick={() => set('search', '')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className={cn(
+            'flex items-center gap-1.5 rounded-xl border px-3 h-9 text-sm font-semibold transition-all whitespace-nowrap',
+            hasActive
+              ? 'bg-primary-600 border-primary-600 text-white'
+              : 'border-slate-200 text-slate-600 hover:bg-slate-50',
+          )}
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Filters
+          {hasActive && (
+            <span className="flex items-center justify-center h-4 w-4 rounded-full bg-white/25 text-[10px] font-bold">
+              {activeCount}
+            </span>
+          )}
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
+
+        {hasActive && (
+          <button
+            onClick={() => onChange(DEFAULT_FILTERS)}
+            className="flex items-center gap-1 rounded-xl border border-slate-200 px-2.5 h-9 text-xs font-semibold text-slate-500 hover:bg-slate-50 transition-colors whitespace-nowrap"
+          >
+            <X className="h-3 w-3" /> Reset
+          </button>
+        )}
+
+        <div className="flex items-center gap-2 ml-auto shrink-0">
+          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary-500" />}
+          <span className="text-xs text-slate-400 whitespace-nowrap flex items-center gap-1">
+            <Users className="h-3.5 w-3.5" />
+            {totalCount > 0
+              ? hasActive
+                ? `${totalCount.toLocaleString()} match${totalCount !== 1 ? 'es' : ''}`
+                : `${totalCount.toLocaleString()} total`
+              : '—'}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Expanded panel ── */}
+      {expanded && (
+        <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-4 space-y-5">
+
+          {/* Rank section */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <FLabel icon={Anchor}>
+                Rank
+                {filters.selectedRanks.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-bold text-primary-700">
+                    {filters.selectedRanks.length}
+                  </span>
+                )}
+              </FLabel>
+              {filters.selectedRanks.length > 0 && (
+                <button
+                  onClick={() => set('selectedRanks', [])}
+                  className="text-[10px] text-slate-400 hover:text-red-500 transition-colors mb-2"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(MARITIME_RANKS as readonly string[]).map(rank => {
+                const on = filters.selectedRanks.includes(rank);
+                return (
+                  <button
+                    key={rank}
+                    onClick={() => toggleRank(rank)}
+                    className={cn(
+                      'rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-all',
+                      on
+                        ? 'bg-primary-600 border-primary-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-primary-300 hover:text-primary-700',
+                    )}
+                  >
+                    {rank}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Nationality section */}
+          <div className="border-t border-slate-100 pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <FLabel icon={Globe}>
+                Nationality
+                {filters.selectedNats.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-bold text-primary-700">
+                    {filters.selectedNats.length}
+                  </span>
+                )}
+              </FLabel>
+              {filters.selectedNats.length > 0 && (
+                <button
+                  onClick={() => set('selectedNats', [])}
+                  className="text-[10px] text-slate-400 hover:text-red-500 transition-colors mb-2"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            {natsLoading ? (
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="h-7 rounded-lg bg-slate-200 animate-pulse" style={{ width: `${60 + (i * 17) % 40}px` }} />
+                ))}
+              </div>
+            ) : nationalities.length === 0 ? (
+              <p className="text-xs text-slate-400 italic">
+                No nationalities indexed yet — click &quot;Fix Filters&quot; to build the index.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
+                {nationalities.map(nat => {
+                  const on = filters.selectedNats.includes(nat);
+                  return (
+                    <button
+                      key={nat}
+                      onClick={() => toggleNat(nat)}
+                      className={cn(
+                        'rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-all',
+                        on
+                          ? 'bg-primary-600 border-primary-600 text-white'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-primary-300 hover:text-primary-700',
+                      )}
+                    >
+                      {nat}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Sort section */}
+          <div className="border-t border-slate-100 pt-4">
+            <FLabel icon={ArrowUpDown}>Sort</FLabel>
+            <select
+              value={filters.sort}
+              onChange={e => set('sort', e.target.value as LegacyFilterState['sort'])}
+              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:border-primary-300"
+            >
+              <option value="newest">Newest first</option>
+              <option value="name_az">Name A → Z</option>
+              <option value="name_za">Name Z → A</option>
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* ── Active chips (when collapsed) ── */}
+      {hasActive && !expanded && (
+        <div className="flex flex-wrap gap-1.5 border-t border-slate-100 px-4 py-2.5 bg-primary-50/30">
+          {filters.selectedRanks.map(r => (
+            <ActiveChip key={r} label={r} onRemove={() => toggleRank(r)} />
+          ))}
+          {filters.selectedNats.map(n => (
+            <ActiveChip key={n} label={n} onRemove={() => toggleNat(n)} />
+          ))}
+          {filters.sort !== 'newest' && (
+            <ActiveChip
+              label={filters.sort === 'name_az' ? 'Name A → Z' : 'Name Z → A'}
+              onRemove={() => set('sort', 'newest')}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 export default function LegacyPage() {
   const [pageData,      setPageData]      = useState<PageData | null>(null);
   const [loading,       setLoading]       = useState(false);
   const [progress,      setProgress]      = useState<ImportProgress | null>(null);
   const [isDragging,    setIsDragging]    = useState(false);
-  const [searchInput,   setSearchInput]   = useState('');
-  const [activeSearch,  setActiveSearch]  = useState('');
   const [cursorStack,   setCursorStack]   = useState<Array<string | null>>([null]);
   const [currentPage,   setCurrentPage]   = useState(0);
-  const [sortBy,        setSortBy]        = useState<'newest' | 'name_az' | 'name_za'>('newest');
-  const [rankFilter,    setRankFilter]    = useState('');
-  const [natInput,      setNatInput]      = useState('');
-  const [activeNat,     setActiveNat]     = useState('');
   const [reindexState,  setReindexState]  = useState<ReindexState>('idle');
   const [reindexResult, setReindexResult] = useState<{ processed: number; updated: number } | null>(null);
   const [fetchError,    setFetchError]    = useState<string | null>(null);
+  const [filters,       setFilters]       = useState<LegacyFilterState>(DEFAULT_FILTERS);
+  const [nationalities, setNationalities] = useState<string[]>([]);
+  const [natsLoading,   setNatsLoading]   = useState(false);
 
-  const abortRef    = useRef(false);
-  const dragCount   = useRef(0);
-  const fileInput   = useRef<HTMLInputElement>(null);
-  const debounceId  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const natDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef   = useRef(false);
+  const dragCount  = useRef(0);
+  const fileInput  = useRef<HTMLInputElement>(null);
+  const debounceId = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track previously committed filter values to detect changes
+  const prevFilters = useRef<LegacyFilterState>(DEFAULT_FILTERS);
+
+  // ── Load nationality options from API ─────────────────────
+  const loadOptions = useCallback(async () => {
+    setNatsLoading(true);
+    try {
+      const token = await auth.currentUser?.getIdToken() ?? '';
+      const res   = await fetch('/api/legacy-cv/options', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json  = await res.json() as { success: boolean; nationalities?: string[]; ranks?: string[] };
+      if (json.success) setNationalities(json.nationalities ?? []);
+    } catch {
+      // non-critical — filters still work, just won't have chips
+    } finally {
+      setNatsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadOptions(); }, [loadOptions]);
 
   // ── Auto-reindex on first visit (backfills rankLower / nationalityLower) ──
   // Without these fields on existing records rank/nat filters return 0 results.
@@ -171,8 +442,10 @@ export default function LegacyPage() {
             localStorage.setItem(REINDEX_KEY, '1');
             setReindexState('done');
             setReindexResult({ processed: json.processed ?? 0, updated: json.updated ?? 0 });
+            // Reload nationality options now that reindex populated the meta doc
+            loadOptions();
             // Re-fetch so rank/nat filters now return results immediately
-            fetchPage(null, '', 'newest', '', '');
+            fetchPage(null, DEFAULT_FILTERS);
           } else {
             setReindexState('idle');
           }
@@ -185,20 +458,17 @@ export default function LegacyPage() {
   // ── Fetch page (server-side search + rank + nat) ───────────
   const fetchPage = useCallback(async (
     afterId: string | null,
-    search: string,
-    sort: 'newest' | 'name_az' | 'name_za',
-    rank: string,
-    nat: string,
+    f: LegacyFilterState,
   ) => {
     setLoading(true);
     setFetchError(null);
     try {
       const token  = await auth.currentUser?.getIdToken() ?? '';
-      const params = new URLSearchParams({ limit: String(PAGE_LIMIT), sort });
-      if (afterId) params.set('afterId', afterId);
-      if (search)  params.set('search', search.trim());
-      if (rank)    params.set('rank', rank.trim());
-      if (nat)     params.set('nat', nat.trim());
+      const params = new URLSearchParams({ limit: String(PAGE_LIMIT), sort: f.sort });
+      if (afterId)                  params.set('afterId', afterId);
+      if (f.search.trim())          params.set('search', f.search.trim());
+      if (f.selectedRanks.length)   params.set('ranks', f.selectedRanks.join(','));
+      if (f.selectedNats.length)    params.set('nats',  f.selectedNats.join(','));
       const res  = await fetch(`/api/legacy-cv?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -217,63 +487,46 @@ export default function LegacyPage() {
   }, []);
 
   // Initial load
-  useEffect(() => { fetchPage(null, '', 'newest', '', ''); }, [fetchPage]);
+  useEffect(() => { fetchPage(null, DEFAULT_FILTERS); }, [fetchPage]);
 
-  // ── Debounce name search ──────────────────────────────────
-  useEffect(() => {
-    if (debounceId.current) clearTimeout(debounceId.current);
-    debounceId.current = setTimeout(() => {
-      const q = searchInput.trim().toLowerCase();
-      if (q === activeSearch) return;
-      setActiveSearch(q);
+  // ── React to filter changes (with name-search debounce) ───
+  function handleFilterChange(next: LegacyFilterState) {
+    setFilters(next);
+
+    const prev = prevFilters.current;
+
+    // If only search changed, debounce the fetch
+    const searchChanged = next.search !== prev.search;
+    const otherChanged  =
+      next.sort          !== prev.sort          ||
+      next.selectedRanks !== prev.selectedRanks ||
+      next.selectedNats  !== prev.selectedNats;
+
+    if (searchChanged && !otherChanged) {
+      if (debounceId.current) clearTimeout(debounceId.current);
+      debounceId.current = setTimeout(() => {
+        prevFilters.current = next;
+        setCursorStack([null]);
+        setCurrentPage(0);
+        fetchPage(null, next);
+      }, 350);
+    } else {
+      // Chips / sort changed — fetch immediately
+      if (debounceId.current) clearTimeout(debounceId.current);
+      prevFilters.current = next;
       setCursorStack([null]);
       setCurrentPage(0);
-      fetchPage(null, q, sortBy, rankFilter, activeNat);
-    }, 350);
-    return () => { if (debounceId.current) clearTimeout(debounceId.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchInput]);
-
-  // ── Debounce nationality input ────────────────────────────
-  useEffect(() => {
-    if (natDebounce.current) clearTimeout(natDebounce.current);
-    natDebounce.current = setTimeout(() => {
-      const q = natInput.trim().toLowerCase();
-      if (q === activeNat) return;
-      setActiveNat(q);
-      setCursorStack([null]);
-      setCurrentPage(0);
-      fetchPage(null, activeSearch, sortBy, rankFilter, q);
-    }, 400);
-    return () => { if (natDebounce.current) clearTimeout(natDebounce.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [natInput]);
-
-  // ── Re-fetch when sort changes ────────────────────────────
-  useEffect(() => {
-    setCursorStack([null]);
-    setCurrentPage(0);
-    fetchPage(null, activeSearch, sortBy, rankFilter, activeNat);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortBy]);
-
-  // ── Rank chip toggle (server-side re-fetch) ───────────────
-  function toggleRank(r: string) {
-    const next = rankFilter === r ? '' : r;
-    setRankFilter(next);
-    setCursorStack([null]);
-    setCurrentPage(0);
-    fetchPage(null, activeSearch, sortBy, next, activeNat);
+      fetchPage(null, next);
+    }
   }
 
   // ── Clear all filters ─────────────────────────────────────
   function clearFilters() {
-    setRankFilter('');
-    setNatInput('');
-    setActiveNat('');
+    prevFilters.current = DEFAULT_FILTERS;
+    setFilters(DEFAULT_FILTERS);
     setCursorStack([null]);
     setCurrentPage(0);
-    fetchPage(null, activeSearch, sortBy, '', '');
+    fetchPage(null, DEFAULT_FILTERS);
   }
 
   // ── Chunked import ────────────────────────────────────────
@@ -354,7 +607,7 @@ export default function LegacyPage() {
     setProgress(p => p ? { ...p, phase: wasStopped ? 'stopped' : 'done', imported: totalImported, skipped: totalSkipped } : null);
     setCursorStack([null]);
     setCurrentPage(0);
-    fetchPage(null, activeSearch, sortBy, rankFilter, activeNat);
+    fetchPage(null, filters);
   }
 
   // ── Reindex existing records ──────────────────────────────
@@ -371,8 +624,10 @@ export default function LegacyPage() {
       if (json.success) {
         setReindexState('done');
         setReindexResult({ processed: json.processed ?? 0, updated: json.updated ?? 0 });
+        // Reload nationality options now that the meta doc is updated
+        loadOptions();
         // Refresh list so filters now work
-        fetchPage(null, activeSearch, sortBy, rankFilter, activeNat);
+        fetchPage(null, filters);
       } else {
         setReindexState('error');
       }
@@ -396,13 +651,13 @@ export default function LegacyPage() {
     const newPage = currentPage + 1;
     setCursorStack(s => { const c = [...s]; c[newPage] = pageData.nextId; return c; });
     setCurrentPage(newPage);
-    fetchPage(pageData.nextId, activeSearch, sortBy, rankFilter, activeNat);
+    fetchPage(pageData.nextId, filters);
   }
   function goPrev() {
     if (currentPage === 0) return;
     const prev = currentPage - 1;
     setCurrentPage(prev);
-    fetchPage(cursorStack[prev] ?? null, activeSearch, sortBy, rankFilter, activeNat);
+    fetchPage(cursorStack[prev] ?? null, filters);
   }
 
   const total   = pageData?.total ?? 0;
@@ -411,7 +666,8 @@ export default function LegacyPage() {
   const from    = currentPage * PAGE_LIMIT + 1;
   const to      = currentPage * PAGE_LIMIT + showing;
 
-  const activeFilterCount = (rankFilter ? 1 : 0) + (activeNat ? 1 : 0);
+  const hasActiveFilters =
+    !!filters.search || filters.selectedRanks.length > 0 || filters.selectedNats.length > 0;
 
   const isImporting = progress?.phase === 'importing' || progress?.phase === 'reading' || progress?.phase === 'stopping';
   const pct = progress && progress.totalBatches > 0
@@ -665,103 +921,15 @@ export default function LegacyPage() {
           </div>
         )}
 
-        {/* ── Filter + Sort bar ─────────────────────────────── */}
-        <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3 space-y-3">
-
-          {/* Row 1: Search + Sort + Nat */}
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Name search */}
-            <div className="relative flex-1 min-w-[180px] max-w-xs">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-              <input
-                type="text"
-                placeholder="Search by name…"
-                value={searchInput}
-                onChange={e => setSearchInput(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
-              />
-              {searchInput && (
-                <button onClick={() => setSearchInput('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-xs">✕</button>
-              )}
-            </div>
-
-            {/* Nationality filter input */}
-            <div className="relative min-w-[150px]">
-              <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-              <input
-                type="text"
-                placeholder="Nationality…"
-                value={natInput}
-                onChange={e => setNatInput(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-8 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-              />
-              {natInput && (
-                <button onClick={() => { setNatInput(''); setActiveNat(''); setCursorStack([null]); setCurrentPage(0); fetchPage(null, activeSearch, sortBy, rankFilter, ''); }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-xs">✕</button>
-              )}
-            </div>
-
-            {/* Sort */}
-            <div className="flex items-center gap-2 ml-auto">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide hidden sm:block">Sort</span>
-              <select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value as typeof sortBy)}
-                className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-primary-400"
-              >
-                <option value="newest">Newest first</option>
-                <option value="name_az">Name A → Z</option>
-                <option value="name_za">Name Z → A</option>
-              </select>
-            </div>
-
-            {/* Stats + loading */}
-            <div className="flex items-center gap-2 text-xs text-slate-400 font-medium shrink-0">
-              {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary-500" />}
-              {total > 0 && (
-                <span className="flex items-center gap-1">
-                  <Users className="h-3.5 w-3.5" />
-                  {activeSearch || rankFilter || activeNat
-                    ? `${total.toLocaleString()} match${total !== 1 ? 'es' : ''}`
-                    : `${total.toLocaleString()} total`}
-                </span>
-              )}
-              {activeFilterCount > 0 && (
-                <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-primary-600 text-white text-[10px] font-bold">
-                  {activeFilterCount}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Row 2: Rank chips */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide shrink-0 mr-1">Rank</span>
-            {MARITIME_RANKS.map(r => (
-              <button
-                key={r}
-                onClick={() => toggleRank(r)}
-                className={cn(
-                  'rounded-full px-2.5 py-0.5 text-[11px] font-semibold border transition-colors',
-                  rankFilter === r
-                    ? 'bg-primary-600 text-white border-primary-600'
-                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-primary-300 hover:text-primary-600',
-                )}
-              >
-                {r}
-              </button>
-            ))}
-            {(rankFilter || activeNat) && (
-              <button
-                onClick={clearFilters}
-                className="ml-2 text-[11px] font-semibold text-slate-400 hover:text-red-500 transition-colors"
-              >
-                ✕ Clear
-              </button>
-            )}
-          </div>
-        </div>
+        {/* ── Filter bar ────────────────────────────────────── */}
+        <LegacyCvFilters
+          filters={filters}
+          onChange={handleFilterChange}
+          totalCount={total}
+          loading={loading}
+          nationalities={nationalities}
+          natsLoading={natsLoading}
+        />
 
         {/* ── Fetch error banner ───────────────────────────── */}
         {fetchError && (
@@ -772,7 +940,7 @@ export default function LegacyPage() {
               <p className="text-xs text-red-500 mt-0.5 break-all">{fetchError}</p>
               {fetchError.includes('index') && (
                 <p className="text-xs text-red-600 font-medium mt-1">
-                  ⚠️ Firestore index missing — check Vercel logs for a link to create the index, or click &quot;Fix Filters&quot; to rebuild index fields on existing records.
+                  Firestore index missing — check Vercel logs for a link to create the index, or click &quot;Fix Filters&quot; to rebuild index fields on existing records.
                 </p>
               )}
             </div>
@@ -783,7 +951,7 @@ export default function LegacyPage() {
         )}
 
         {/* ── Records list ─────────────────────────────────── */}
-        {!loading && records.length === 0 && total === 0 && !activeSearch && !rankFilter && !activeNat ? (
+        {!loading && records.length === 0 && total === 0 && !hasActiveFilters ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
             <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-slate-100">
               <Archive className="h-10 w-10 text-slate-300" />

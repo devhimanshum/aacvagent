@@ -95,11 +95,13 @@ export async function GET(req: NextRequest) {
     const sort    = (['newest', 'name_az', 'name_za'] as const).includes(sortRaw as 'newest')
       ? sortRaw as 'newest' | 'name_az' | 'name_za'
       : 'newest';
-    const rank    = searchParams.get('rank') ?? undefined;
-    const nat     = searchParams.get('nat')  ?? undefined;
+    const ranksParam = searchParams.get('ranks');
+    const natsParam  = searchParams.get('nats');
+    const rankFilters = ranksParam ? ranksParam.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+    const natFilters  = natsParam  ? natsParam.split(',').map(s => s.trim()).filter(Boolean)  : undefined;
 
     try {
-      const data = await adminGetLegacyCvsPaged(limit, afterId, search, sort, rank, nat);
+      const data = await adminGetLegacyCvsPaged(limit, afterId, search, sort, rankFilters, natFilters);
       return NextResponse.json({ success: true, data });
     } catch (queryErr) {
       // Log the full Firestore error — if an index is missing, this will show the

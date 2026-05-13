@@ -362,8 +362,8 @@ export async function adminGetLegacyCvsPaged(
   afterId?: string,
   search?: string,
   sort: 'newest' | 'name_az' | 'name_za' = 'newest',
-  rankFilter?: string,
-  natFilter?: string,
+  rankFilters?: string[],
+  natFilters?: string[],
 ): Promise<{ records: LegacyCv[]; hasMore: boolean; nextId: string | null; total: number }> {
   const db  = adminDb();
   const col = db.collection(C.LEGACY_CVS);
@@ -371,20 +371,22 @@ export async function adminGetLegacyCvsPaged(
   const HIGH = ''; // highest Unicode char — caps a prefix range correctly
 
   const q_term = search?.trim().toLowerCase() || '';
-  const q_rank = rankFilter?.trim().toLowerCase() || '';
-  const q_nat  = natFilter?.trim().toLowerCase() || '';
+  const ranks  = (rankFilters ?? []).map(r => r.toLowerCase().trim()).filter(Boolean);
+  const nats   = (natFilters  ?? []).map(n => n.toLowerCase().trim()).filter(Boolean);
 
   // ── Build query ───────────────────────────────────────────────────────────
-  // All filters use PREFIX RANGE queries (>= field, <= field+HIGH) so they
-  // match partial values ("master" matches "master mariner", "master unlimited"…)
-  // AND so no composite Firestore index is needed (range + orderBy on same field).
+  // Priority: name search > rank filter > nat filter > no filter (sort only)
   //
-  // We apply AT MOST ONE filter at a time to avoid composite index requirements.
-  // Priority: name > rank > nationality.
+  // Single-value rank/nat: use prefix range so "master" matches "master mariner"
+  // Multi-value rank/nat:  use `in` operator (no explicit orderBy — doc ID order)
+  // Combined rank + nat:   apply rank server-side, nat as post-filter on results
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let baseQ: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = col as any;
-  let orderField: string;
+  let orderField: string | null = null;
   let orderDir: 'asc' | 'desc' = 'asc';
+
+  // Track whether we need to post-filter by nationality after fetching
+  let postFilterNats: string[] = [];
 
   if (q_term) {
     // Name prefix search
@@ -393,27 +395,46 @@ export async function adminGetLegacyCvsPaged(
       .where('nameLower', '<=', q_term + HIGH);
     orderField = 'nameLower';
     orderDir   = sort === 'name_za' ? 'desc' : 'asc';
-  } else if (q_rank) {
-    // Rank prefix search — matches "master", "master mariner", "chief officer"…
+  } else if (ranks.length === 1) {
+    // Single rank — prefix range
+    const r = ranks[0];
     baseQ = baseQ
-      .where('rankLower', '>=', q_rank)
-      .where('rankLower', '<=', q_rank + HIGH);
+      .where('rankLower', '>=', r)
+      .where('rankLower', '<=', r + HIGH);
     orderField = 'rankLower';
-  } else if (q_nat) {
-    // Nationality prefix search — "india" matches "indian", "indonesia"…
-    baseQ = baseQ
-      .where('nationalityLower', '>=', q_nat)
-      .where('nationalityLower', '<=', q_nat + HIGH);
-    orderField = 'nationalityLower';
-  } else if (sort === 'name_az') {
-    orderField = 'nameLower';
     orderDir   = 'asc';
-  } else if (sort === 'name_za') {
-    orderField = 'nameLower';
-    orderDir   = 'desc';
+    // Apply nat as post-filter if also set
+    if (nats.length > 0) postFilterNats = nats;
+  } else if (ranks.length > 1) {
+    // Multiple ranks — `in` query (up to 30), no explicit orderBy
+    baseQ = baseQ.where('rankLower', 'in', ranks.slice(0, 30));
+    orderField = null;
+    // Apply nat as post-filter if also set
+    if (nats.length > 0) postFilterNats = nats;
+  } else if (nats.length === 1) {
+    // Single nat — prefix range
+    const n = nats[0];
+    baseQ = baseQ
+      .where('nationalityLower', '>=', n)
+      .where('nationalityLower', '<=', n + HIGH);
+    orderField = 'nationalityLower';
+    orderDir   = 'asc';
+  } else if (nats.length > 1) {
+    // Multiple nats — `in` query (up to 30), no explicit orderBy
+    baseQ = baseQ.where('nationalityLower', 'in', nats.slice(0, 30));
+    orderField = null;
   } else {
-    orderField = 'createdAt';
-    orderDir   = 'desc';
+    // No filters — sort only
+    if (sort === 'name_az') {
+      orderField = 'nameLower';
+      orderDir   = 'asc';
+    } else if (sort === 'name_za') {
+      orderField = 'nameLower';
+      orderDir   = 'desc';
+    } else {
+      orderField = 'createdAt';
+      orderDir   = 'desc';
+    }
   }
 
   // ── Count (best-effort — some filtered counts may fail; that's OK) ────────
@@ -426,15 +447,25 @@ export async function adminGetLegacyCvsPaged(
   }
 
   // ── Paginated list query ──────────────────────────────────────────────────
-  let q = baseQ.orderBy(orderField, orderDir).limit(limit + 1);
+  let q = orderField
+    ? baseQ.orderBy(orderField, orderDir).limit(limit + 1)
+    : baseQ.limit(limit + 1);
 
   if (afterId) {
     const cursor = await col.doc(afterId).get();
     if (cursor.exists) q = q.startAfter(cursor);
   }
 
-  const snap    = await q.get();
-  const docs    = snap.docs.map(d => toPlain(d) as unknown as LegacyCv);
+  const snap = await q.get();
+  let docs   = snap.docs.map(d => toPlain(d) as unknown as LegacyCv);
+
+  // Apply nationality post-filter when rank + nat are both active
+  if (postFilterNats.length > 0) {
+    docs = docs.filter(cv =>
+      postFilterNats.some(n => (cv.nationalityLower ?? '').startsWith(n)),
+    );
+  }
+
   const hasMore = docs.length > limit;
   const records = hasMore ? docs.slice(0, limit) : docs;
   const nextId  = hasMore ? records[records.length - 1].id : null;
@@ -444,7 +475,6 @@ export async function adminGetLegacyCvsPaged(
 
   return { records, hasMore, nextId, total };
 }
-
 // ── Legacy job config (kept so old imports don't break) ───────
 export async function adminGetJobConfig() {
   return null;
