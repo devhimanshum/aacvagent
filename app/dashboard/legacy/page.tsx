@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Archive, Upload, Search, ChevronLeft, ChevronRight,
-  Globe, Users, CheckCircle2, XCircle, Loader2, FileJson, RefreshCw,
+  Globe, Users, CheckCircle2, XCircle, Loader2, FileJson,
   SlidersHorizontal, ChevronDown, ChevronUp, Anchor, ArrowUpDown, X,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
@@ -319,7 +319,7 @@ function LegacyCvFilters({
               </div>
             ) : nationalities.length === 0 ? (
               <p className="text-xs text-slate-400 italic">
-                No nationalities indexed yet — click &quot;Fix Filters&quot; to build the index.
+                No nationality data available yet.
               </p>
             ) : (
               <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
@@ -610,32 +610,6 @@ export default function LegacyPage() {
     fetchPage(null, filters);
   }
 
-  // ── Reindex existing records ──────────────────────────────
-  async function runReindex() {
-    setReindexState('running');
-    setReindexResult(null);
-    try {
-      const token = await auth.currentUser?.getIdToken() ?? '';
-      const res   = await fetch('/api/legacy-cv/reindex', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = await res.json() as { success: boolean; processed?: number; updated?: number; error?: string };
-      if (json.success) {
-        setReindexState('done');
-        setReindexResult({ processed: json.processed ?? 0, updated: json.updated ?? 0 });
-        // Reload nationality options now that the meta doc is updated
-        loadOptions();
-        // Refresh list so filters now work
-        fetchPage(null, filters);
-      } else {
-        setReindexState('error');
-      }
-    } catch {
-      setReindexState('error');
-    }
-  }
-
   // ── Drag handlers ─────────────────────────────────────────
   const onDragEnter = (e: React.DragEvent) => { e.preventDefault(); dragCount.current++; if (dragCount.current === 1) setIsDragging(true); };
   const onDragLeave = (e: React.DragEvent) => { e.preventDefault(); dragCount.current--; if (dragCount.current === 0) setIsDragging(false); };
@@ -719,28 +693,6 @@ export default function LegacyPage() {
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {/* Reindex button — fixes rank/nat filters on old imported records */}
-                <button
-                  onClick={runReindex}
-                  disabled={reindexState === 'running'}
-                  title="Backfill rank/nationality index fields on existing records so filters work correctly"
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors',
-                    reindexState === 'done'
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                      : reindexState === 'error'
-                        ? 'border-red-200 bg-red-50 text-red-600'
-                        : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-primary-300 hover:text-primary-600',
-                  )}
-                >
-                  {reindexState === 'running'
-                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reindexing…</>
-                    : reindexState === 'done'
-                      ? <><CheckCircle2 className="h-3.5 w-3.5" /> {reindexResult ? `${reindexResult.updated.toLocaleString()} updated` : 'Done'}</>
-                      : reindexState === 'error'
-                        ? <><XCircle className="h-3.5 w-3.5" /> Failed</>
-                        : <><RefreshCw className="h-3.5 w-3.5" /> Fix Filters</>}
-                </button>
                 <button
                   onClick={() => fileInput.current?.click()}
                   className="rounded-xl bg-primary-600 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-700 transition-colors"
@@ -940,7 +892,7 @@ export default function LegacyPage() {
               <p className="text-xs text-red-500 mt-0.5 break-all">{fetchError}</p>
               {fetchError.includes('index') && (
                 <p className="text-xs text-red-600 font-medium mt-1">
-                  Firestore index missing — check Vercel logs for a link to create the index, or click &quot;Fix Filters&quot; to rebuild index fields on existing records.
+                  Firestore index missing — check Vercel logs for a link to create the composite index.
                 </p>
               )}
             </div>
