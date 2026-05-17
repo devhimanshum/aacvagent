@@ -91,11 +91,12 @@ export async function adminUndoReview(candidateId: string): Promise<void> {
   if (!snap || !srcCollection) throw new Error(`Candidate ${candidateId} not found in selected or unselected`);
 
   const data = snap.data()!;
+  // Strip review metadata before writing back to pending — FieldValue.delete()
+  // is not allowed inside set() without merge:true, so we omit the fields instead.
+  const { reviewedAt: _ra, reviewNote: _rn, ...rest } = data;
   await db.collection(C.PENDING).doc(candidateId).set({
-    ...data,
+    ...rest,
     reviewStatus: 'pending',
-    reviewedAt:   FieldValue.delete(),
-    reviewNote:   FieldValue.delete(),
   });
   await db.collection(srcCollection).doc(candidateId).delete();
 }
