@@ -441,13 +441,27 @@ export function CandidateCard({ candidate, index = 0, rankConfig }: CandidateCar
       <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-2.5">
         <p className="text-[11px] text-slate-400">{formatDate(candidate.processedAt || candidate.createdAt)}</p>
         <div className="flex items-center gap-2">
-          {candidate.cvAttachmentId && candidate.emailId && (
+          {candidate.cvAttachmentId && candidate.emailId ? (
             <CVPreviewButton
               emailId={candidate.emailId}
               attachmentId={candidate.cvAttachmentId}
               fileName={candidate.cvFileName || 'CV'}
               variant="ghost"
             />
+          ) : (
+            <span
+              className="flex items-center gap-1 text-[11px] text-slate-300 cursor-default select-none"
+              title={
+                !candidate.emailId && !candidate.cvAttachmentId
+                  ? 'CV was uploaded directly — no email attachment stored'
+                  : !candidate.emailId
+                    ? 'Email ID missing — CV source email not recorded'
+                    : 'Attachment ID missing — CV file reference not saved'
+              }
+            >
+              <FileText className="h-3.5 w-3.5" />
+              No CV file
+            </span>
           )}
           <button
             onClick={() => setExpanded(e => !e)}

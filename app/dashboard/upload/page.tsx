@@ -1,22 +1,27 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UploadCloud, CheckCircle2, AlertCircle, Copy, Anchor, Clock, Zap } from 'lucide-react';
+import {
+  UploadCloud, CheckCircle2, AlertCircle, Copy, Anchor, Clock,
+  Zap, X, FileText, FileSpreadsheet, File, Loader2, Plus,
+} from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { auth } from '@/lib/firebase/config';
 import { cn } from '@/lib/utils/helpers';
 
 // ── Types ─────────────────────────────────────────────────────
-type State = 'idle' | 'processing' | 'done' | 'duplicate' | 'error';
+type FileStatus = 'queued' | 'processing' | 'done' | 'duplicate' | 'error';
 
-interface Result {
-  name?:                 string;
-  currentRank?:          string;
-  totalSeaServiceMonths?: number;
-  rankMatched?:          boolean;
-  rankMatchScore?:       number;
-  message?:              string;
+interface FileItem {
+  id:       string;
+  file:     File;
+  status:   FileStatus;
+  name?:    string;
+  rank?:    string;
+  service?: number;
+  score?:   number;
+  message?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -33,58 +38,121 @@ function isSupported(file: File): boolean {
     t === 'application/pdf' ||
     t === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
     t === 'application/msword' ||
-    n.endsWith('.pdf') || n.endsWith('.docx') || n.endsWith('.doc')
+    t === 'application/vnd.ms-excel' ||
+    t === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    n.endsWith('.pdf') || n.endsWith('.docx') || n.endsWith('.doc') ||
+    n.endsWith('.xls') || n.endsWith('.xlsx')
   );
+}
+
+function fileIcon(file: File) {
+  const n = file.name.toLowerCase();
+  if (n.endsWith('.xls') || n.endsWith('.xlsx'))
+    return <FileSpreadsheet className="h-4 w-4 text-emerald-500" />;
+  if (n.endsWith('.pdf'))
+    return <FileText className="h-4 w-4 text-red-400" />;
+  if (n.endsWith('.docx') || n.endsWith('.doc'))
+    return <FileText className="h-4 w-4 text-blue-400" />;
+  return <File className="h-4 w-4 text-slate-400" />;
+}
+
+function uid() {
+  return Math.random().toString(36).slice(2);
 }
 
 // ── Main page ─────────────────────────────────────────────────
 export default function UploadPage() {
-  const [state,     setState]     = useState<State>('idle');
-  const [result,    setResult]    = useState<Result | null>(null);
-  const [fileName,  setFileName]  = useState('');
+  const [items,      setItems]      = useState<FileItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const dragCount  = useRef(0);
-  const inputRef   = useRef<HTMLInputElement>(null);
+  const processingRef = useRef(false);
+  const dragCount     = useRef(0);
+  const inputRef      = useRef<HTMLInputElement>(null);
 
-  // ── Process a single file ──────────────────────────────────
-  async function process(file: File) {
-    if (!isSupported(file)) {
-      setState('error');
-      setResult({ message: 'Unsupported file. Please upload a PDF or DOCX.' });
-      return;
-    }
+  // ── Add files to queue ──────────────────────────────────────
+  const enqueue = useCallback((files: FileList | File[]) => {
+    const arr = Array.from(files);
+    const valid   = arr.filter(isSupported);
+    const invalid = arr.filter(f => !isSupported(f));
 
-    setFileName(file.name);
-    setState('processing');
-    setResult(null);
-
-    try {
-      const token = await auth.currentUser?.getIdToken() ?? '';
-      const fd    = new FormData();
-      fd.append('file', file);
-
-      const res  = await fetch('/api/cv/upload', {
-        method:  'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body:    fd,
+    const newItems: FileItem[] = valid.map(f => ({ id: uid(), file: f, status: 'queued' }));
+    if (invalid.length) {
+      invalid.forEach(f => {
+        newItems.push({ id: uid(), file: f, status: 'error', message: 'Unsupported type — use PDF, DOCX, DOC, XLS or XLSX' });
       });
-      const data = await res.json();
-
-      if (data.status === 'success') {
-        setState('done');
-        setResult(data.candidate ?? {});
-      } else if (data.status === 'duplicate') {
-        setState('duplicate');
-        setResult({ message: data.message });
-      } else {
-        setState('error');
-        setResult({ message: data.message || 'Processing failed. Please try again.' });
-      }
-    } catch {
-      setState('error');
-      setResult({ message: 'Network error. Check your connection and try again.' });
     }
-  }
+
+    setItems(prev => [...prev, ...newItems]);
+
+    // kick off processing after state settles
+    setTimeout(() => processQueue(), 50);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Sequential processor ────────────────────────────────────
+  const processQueue = useCallback(async () => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      // grab first queued item from current state
+      let target: FileItem | undefined;
+      setItems(prev => {
+        target = prev.find(i => i.status === 'queued');
+        return prev;
+      });
+      // Need to read outside setter — use a ref trick via a temp var
+      await new Promise<void>(res => {
+        setItems(prev => {
+          target = prev.find(i => i.status === 'queued');
+          res();
+          return prev;
+        });
+      });
+
+      if (!target) break;
+      const item = target;
+
+      // mark as processing
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'processing' } : i));
+
+      try {
+        const token = await auth.currentUser?.getIdToken() ?? '';
+        const fd    = new FormData();
+        fd.append('file', item.file);
+
+        const res  = await fetch('/api/cv/upload', {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body:    fd,
+        });
+        const data = await res.json();
+
+        if (data.status === 'success') {
+          setItems(prev => prev.map(i => i.id === item.id ? {
+            ...i, status: 'done',
+            name: data.candidate?.name,
+            rank: data.candidate?.currentRank,
+            service: data.candidate?.totalSeaServiceMonths,
+            score: data.candidate?.rankMatchScore,
+          } : i));
+        } else if (data.status === 'duplicate') {
+          setItems(prev => prev.map(i => i.id === item.id ? {
+            ...i, status: 'duplicate', message: data.message,
+          } : i));
+        } else {
+          setItems(prev => prev.map(i => i.id === item.id ? {
+            ...i, status: 'error', message: data.message || 'Processing failed',
+          } : i));
+        }
+      } catch {
+        setItems(prev => prev.map(i => i.id === item.id ? {
+          ...i, status: 'error', message: 'Network error',
+        } : i));
+      }
+    }
+
+    processingRef.current = false;
+  }, []);
 
   // ── Drag handlers ──────────────────────────────────────────
   function onDragEnter(e: React.DragEvent) {
@@ -97,287 +165,200 @@ export default function UploadPage() {
     dragCount.current--;
     if (dragCount.current === 0) setIsDragging(false);
   }
-  function onDragOver(e: React.DragEvent) { e.preventDefault(); }
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
     dragCount.current = 0;
     setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) process(file);
+    if (e.dataTransfer.files.length) enqueue(e.dataTransfer.files);
   }
 
-  function reset() {
-    setState('idle');
-    setResult(null);
-    setFileName('');
-    if (inputRef.current) inputRef.current.value = '';
-  }
+  const removeItem = (id: string) =>
+    setItems(prev => prev.filter(i => i.id !== id));
 
-  // ── UI states ─────────────────────────────────────────────
-  const isActive = state === 'processing';
+  const clearDone = () =>
+    setItems(prev => prev.filter(i => i.status === 'queued' || i.status === 'processing'));
+
+  const hasItems   = items.length > 0;
+  const doneCount  = items.filter(i => i.status === 'done').length;
+  const dupCount   = items.filter(i => i.status === 'duplicate').length;
+  const errCount   = items.filter(i => i.status === 'error').length;
+  const busyCount  = items.filter(i => i.status === 'queued' || i.status === 'processing').length;
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <Header title="Upload CV" subtitle="Drop a CV to process it instantly with AI" />
+      <Header title="Upload CV" subtitle="Drop one or multiple CVs to process them with AI" />
 
-      <div className="flex-1 overflow-y-auto bg-surface-50 flex items-center justify-center p-6">
-        <div className="w-full max-w-lg">
-          <AnimatePresence mode="wait">
+      <div className="flex-1 overflow-y-auto bg-surface-50 p-6">
+        <div className="mx-auto max-w-2xl space-y-5">
 
-            {/* ── IDLE ── */}
-            {state === 'idle' && (
+          {/* ── Drop zone ── */}
+          <div
+            onDragEnter={onDragEnter}
+            onDragLeave={onDragLeave}
+            onDragOver={e => e.preventDefault()}
+            onDrop={onDrop}
+            onClick={() => inputRef.current?.click()}
+            className={cn(
+              'relative flex cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed px-8 py-14 text-center transition-all duration-200 select-none',
+              isDragging
+                ? 'border-primary-400 bg-primary-50/70 shadow-xl shadow-primary-100/50'
+                : 'border-slate-200 bg-white hover:border-primary-300 hover:bg-primary-50/20 hover:shadow-lg',
+            )}
+          >
+            <motion.div
+              animate={isDragging ? { y: [-6, 6, -6], scale: 1.18 } : { y: [0, -4, 0] }}
+              transition={isDragging
+                ? { duration: 0.7, repeat: Infinity, ease: 'easeInOut' }
+                : { duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+              className={cn(
+                'flex h-20 w-20 items-center justify-center rounded-3xl transition-colors duration-200',
+                isDragging ? 'bg-primary-100' : 'bg-slate-100',
+              )}
+            >
+              <UploadCloud className={cn('h-10 w-10 transition-colors duration-200', isDragging ? 'text-primary-600' : 'text-slate-400')} />
+            </motion.div>
+
+            <div className="space-y-1">
+              <p className={cn('text-lg font-bold transition-colors', isDragging ? 'text-primary-700' : 'text-slate-700')}>
+                {isDragging ? 'Release to upload' : hasItems ? 'Drop more CVs' : 'Drop CVs here'}
+              </p>
+              <p className="text-sm text-slate-400">
+                or{' '}
+                <span className="font-semibold text-primary-600 underline underline-offset-2">click to browse</span>
+                {' '}— multiple files supported
+              </p>
+              <p className="text-xs text-slate-300 pt-1">PDF · DOCX · DOC · XLS · XLSX</p>
+            </div>
+
+            <input
+              ref={inputRef}
+              type="file"
+              multiple
+              accept=".pdf,.docx,.doc,.xls,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              onChange={e => { if (e.target.files?.length) { enqueue(e.target.files); e.target.value = ''; } }}
+            />
+          </div>
+
+          {/* ── Summary bar ── */}
+          {hasItems && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-sm font-semibold text-slate-600">{items.length} file{items.length !== 1 ? 's' : ''}</span>
+              {doneCount  > 0 && <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-0.5">✓ {doneCount} saved</span>}
+              {dupCount   > 0 && <span className="text-xs font-semibold text-amber-600  bg-amber-50  border border-amber-200  rounded-full px-2.5 py-0.5">↷ {dupCount} duplicate</span>}
+              {errCount   > 0 && <span className="text-xs font-semibold text-red-600    bg-red-50    border border-red-200    rounded-full px-2.5 py-0.5">✕ {errCount} failed</span>}
+              {busyCount  > 0 && <span className="text-xs font-semibold text-primary-600 bg-primary-50 border border-primary-200 rounded-full px-2.5 py-0.5 flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" />{busyCount} remaining</span>}
+              <div className="ml-auto flex items-center gap-2">
+                {busyCount === 0 && items.length > 0 && (
+                  <button
+                    onClick={clearDone}
+                    className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    Clear finished
+                  </button>
+                )}
+                <button
+                  onClick={() => inputRef.current?.click()}
+                  className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add more
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── File list ── */}
+          <AnimatePresence initial={false}>
+            {items.map(item => (
               <motion.div
-                key="idle"
-                initial={{ opacity: 0, y: 16 }}
+                key={item.id}
+                initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -12 }}
-                transition={{ duration: 0.22 }}
-                onDragEnter={onDragEnter}
-                onDragLeave={onDragLeave}
-                onDragOver={onDragOver}
-                onDrop={onDrop}
-                onClick={() => inputRef.current?.click()}
+                exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                transition={{ duration: 0.18 }}
                 className={cn(
-                  'relative flex cursor-pointer flex-col items-center justify-center gap-5 rounded-3xl border-2 border-dashed px-10 py-20 text-center transition-all duration-200 select-none',
-                  isDragging
-                    ? 'border-primary-400 bg-primary-50/70 shadow-xl shadow-primary-100/50'
-                    : 'border-slate-200 bg-white hover:border-primary-300 hover:bg-primary-50/20 hover:shadow-lg',
+                  'flex items-start gap-3 rounded-2xl border bg-white px-4 py-3.5 shadow-sm',
+                  item.status === 'done'       && 'border-emerald-200',
+                  item.status === 'duplicate'  && 'border-amber-200',
+                  item.status === 'error'      && 'border-red-200',
+                  item.status === 'processing' && 'border-primary-200',
+                  item.status === 'queued'     && 'border-slate-100',
                 )}
               >
-                {/* Animated cloud icon */}
-                <motion.div
-                  animate={isDragging
-                    ? { y: [-6, 6, -6], scale: 1.18 }
-                    : { y: [0, -4, 0] }
-                  }
-                  transition={isDragging
-                    ? { duration: 0.7, repeat: Infinity, ease: 'easeInOut' }
-                    : { duration: 3, repeat: Infinity, ease: 'easeInOut' }
-                  }
-                  className={cn(
-                    'flex h-24 w-24 items-center justify-center rounded-3xl transition-colors duration-200',
-                    isDragging ? 'bg-primary-100' : 'bg-slate-100',
+                {/* Icon / spinner */}
+                <div className="mt-0.5 shrink-0">
+                  {item.status === 'processing' && <Loader2 className="h-4 w-4 animate-spin text-primary-500" />}
+                  {item.status === 'done'       && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+                  {item.status === 'duplicate'  && <Copy className="h-4 w-4 text-amber-500" />}
+                  {item.status === 'error'      && <AlertCircle className="h-4 w-4 text-red-400" />}
+                  {item.status === 'queued'     && fileIcon(item.file)}
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-slate-700 truncate">{item.file.name}</p>
+
+                  {item.status === 'queued' && (
+                    <p className="text-xs text-slate-400 mt-0.5">Queued…</p>
                   )}
-                >
-                  <UploadCloud className={cn(
-                    'h-12 w-12 transition-colors duration-200',
-                    isDragging ? 'text-primary-600' : 'text-slate-400',
-                  )} />
-                </motion.div>
-
-                <div className="space-y-1.5">
-                  <p className={cn(
-                    'text-xl font-bold transition-colors',
-                    isDragging ? 'text-primary-700' : 'text-slate-700',
-                  )}>
-                    {isDragging ? 'Release to upload' : 'Drop CV here'}
-                  </p>
-                  <p className="text-sm text-slate-400">
-                    or{' '}
-                    <span className="font-semibold text-primary-600 underline underline-offset-2">
-                      click to browse
-                    </span>
-                  </p>
-                  <p className="text-xs text-slate-300 pt-1">PDF · DOCX · DOC</p>
-                </div>
-
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  className="hidden"
-                  onChange={e => {
-                    const file = e.target.files?.[0];
-                    if (file) process(file);
-                  }}
-                />
-              </motion.div>
-            )}
-
-            {/* ── PROCESSING ── */}
-            {state === 'processing' && (
-              <motion.div
-                key="processing"
-                initial={{ opacity: 0, scale: 0.97 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.97 }}
-                transition={{ duration: 0.22 }}
-                className="flex flex-col items-center justify-center gap-6 rounded-3xl border border-blue-100 bg-white px-10 py-20 text-center shadow-lg shadow-blue-50"
-              >
-                {/* Spinner rings */}
-                <div className="relative flex h-24 w-24 items-center justify-center">
-                  <div className="absolute inset-0 rounded-full border-4 border-slate-100" />
-                  <div className="absolute inset-0 animate-spin rounded-full border-4 border-transparent border-t-primary-500" style={{ animationDuration: '0.9s' }} />
-                  <div className="absolute inset-2 animate-spin rounded-full border-4 border-transparent border-t-blue-300" style={{ animationDuration: '1.4s', animationDirection: 'reverse' }} />
-                  <UploadCloud className="h-8 w-8 text-primary-400" />
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-lg font-bold text-slate-800">Analysing CV…</p>
-                  <p className="text-sm text-slate-400 max-w-xs leading-relaxed">
-                    AI is extracting rank history, sea service &amp; candidate details
-                  </p>
-                  {fileName && (
-                    <p className="text-[11px] text-slate-300 truncate max-w-xs font-mono">{fileName}</p>
+                  {item.status === 'processing' && (
+                    <p className="text-xs text-primary-500 mt-0.5">Analysing with AI…</p>
                   )}
-                </div>
-
-                {/* Animated dots */}
-                <div className="flex items-center gap-1.5">
-                  {[0, 1, 2, 3].map(i => (
-                    <motion.div
-                      key={i}
-                      animate={{ opacity: [0.3, 1, 0.3] }}
-                      transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
-                      className="h-1.5 w-1.5 rounded-full bg-primary-400"
-                    />
-                  ))}
-                </div>
-              </motion.div>
-            )}
-
-            {/* ── DONE ── */}
-            {state === 'done' && (
-              <motion.div
-                key="done"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.25, type: 'spring', stiffness: 280, damping: 24 }}
-                className="flex flex-col items-center justify-center gap-6 rounded-3xl border border-emerald-200 bg-white px-10 py-16 text-center shadow-lg shadow-emerald-50"
-              >
-                {/* Big check */}
-                <motion.div
-                  initial={{ scale: 0, rotate: -20 }}
-                  animate={{ scale: 1, rotate: 0 }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 20, delay: 0.1 }}
-                  className="flex h-24 w-24 items-center justify-center rounded-full bg-emerald-50 border-2 border-emerald-200"
-                >
-                  <CheckCircle2 className="h-12 w-12 text-emerald-500" />
-                </motion.div>
-
-                <div className="space-y-1">
-                  <p className="text-xl font-bold text-slate-800">Saved to Selected</p>
-                  <p className="text-sm text-slate-400">CV processed and ready for review</p>
-                </div>
-
-                {/* Candidate info */}
-                {result && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.2 }}
-                    className="w-full rounded-2xl bg-slate-50 border border-slate-100 px-5 py-4 space-y-3"
-                  >
-                    {result.name && (
-                      <p className="text-base font-bold text-slate-800">{result.name}</p>
-                    )}
-                    <div className="flex flex-wrap justify-center gap-2">
-                      {result.currentRank && (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-100 rounded-full px-2.5 py-1">
-                          <Anchor className="h-3 w-3" />{result.currentRank}
+                  {item.status === 'done' && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {item.name && <span className="text-xs font-semibold text-slate-700">{item.name}</span>}
+                      {item.rank && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary-700 bg-primary-50 border border-primary-100 rounded-full px-2 py-0.5">
+                          <Anchor className="h-3 w-3" />{item.rank}
                         </span>
                       )}
-                      {!!result.totalSeaServiceMonths && (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-full px-2.5 py-1">
-                          <Clock className="h-3 w-3 text-slate-400" />{monthsLabel(result.totalSeaServiceMonths)}
+                      {!!item.service && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 bg-slate-50 border border-slate-100 rounded-full px-2 py-0.5">
+                          <Clock className="h-3 w-3 text-slate-400" />{monthsLabel(item.service)}
                         </span>
                       )}
-                      {result.rankMatched !== undefined && (
+                      {item.score !== undefined && (
                         <span className={cn(
-                          'inline-flex items-center gap-1 text-xs font-semibold rounded-full px-2.5 py-1 border',
-                          result.rankMatched
+                          'inline-flex items-center gap-1 text-[11px] font-semibold rounded-full px-2 py-0.5 border',
+                          item.score > 0
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             : 'bg-amber-50 text-amber-700 border-amber-200',
                         )}>
-                          <Zap className="h-3 w-3" />
-                          {result.rankMatched ? `${result.rankMatchScore ?? 0}% match` : 'No rank match'}
+                          <Zap className="h-3 w-3" />{item.score}% match
                         </span>
                       )}
                     </div>
-                  </motion.div>
+                  )}
+                  {(item.status === 'duplicate' || item.status === 'error') && item.message && (
+                    <p className={cn(
+                      'text-xs mt-0.5',
+                      item.status === 'duplicate' ? 'text-amber-600' : 'text-red-500',
+                    )}>
+                      {item.message}
+                    </p>
+                  )}
+                </div>
+
+                {/* Remove button */}
+                {item.status !== 'processing' && (
+                  <button
+                    onClick={() => removeItem(item.id)}
+                    className="shrink-0 rounded-lg p-1 text-slate-300 hover:text-slate-500 hover:bg-slate-50 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 )}
-
-                <button
-                  onClick={reset}
-                  className="mt-2 rounded-2xl border-2 border-dashed border-slate-200 px-8 py-3 text-sm font-semibold text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-all"
-                >
-                  Drop another CV
-                </button>
               </motion.div>
-            )}
-
-            {/* ── DUPLICATE ── */}
-            {state === 'duplicate' && (
-              <motion.div
-                key="duplicate"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.22 }}
-                className="flex flex-col items-center justify-center gap-6 rounded-3xl border border-amber-200 bg-white px-10 py-16 text-center shadow-lg shadow-amber-50"
-              >
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: 'spring', stiffness: 280, damping: 22, delay: 0.05 }}
-                  className="flex h-24 w-24 items-center justify-center rounded-full bg-amber-50 border-2 border-amber-200"
-                >
-                  <Copy className="h-11 w-11 text-amber-500" />
-                </motion.div>
-
-                <div className="space-y-1.5">
-                  <p className="text-xl font-bold text-slate-800">Already in system</p>
-                  {result?.message && (
-                    <p className="text-sm text-amber-600 max-w-xs leading-relaxed">{result.message}</p>
-                  )}
-                </div>
-
-                <button
-                  onClick={reset}
-                  className="mt-2 rounded-2xl border-2 border-dashed border-slate-200 px-8 py-3 text-sm font-semibold text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-all"
-                >
-                  Drop another CV
-                </button>
-              </motion.div>
-            )}
-
-            {/* ── ERROR ── */}
-            {state === 'error' && (
-              <motion.div
-                key="error"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.22 }}
-                className="flex flex-col items-center justify-center gap-6 rounded-3xl border border-red-200 bg-white px-10 py-16 text-center shadow-lg shadow-red-50"
-              >
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: 'spring', stiffness: 280, damping: 22, delay: 0.05 }}
-                  className="flex h-24 w-24 items-center justify-center rounded-full bg-red-50 border-2 border-red-200"
-                >
-                  <AlertCircle className="h-11 w-11 text-red-400" />
-                </motion.div>
-
-                <div className="space-y-1.5">
-                  <p className="text-xl font-bold text-slate-800">Processing failed</p>
-                  {result?.message && (
-                    <p className="text-sm text-red-500 max-w-xs leading-relaxed">{result.message}</p>
-                  )}
-                </div>
-
-                <button
-                  onClick={reset}
-                  className="mt-2 rounded-2xl border-2 border-dashed border-slate-200 px-8 py-3 text-sm font-semibold text-slate-400 hover:border-red-300 hover:text-red-500 transition-all"
-                >
-                  Try again
-                </button>
-              </motion.div>
-            )}
-
+            ))}
           </AnimatePresence>
+
+          {/* ── Empty state ── */}
+          {!hasItems && (
+            <p className="text-center text-xs text-slate-300 pt-2">
+              Supports PDF, DOCX, DOC, XLS and XLSX — drop multiple files at once
+            </p>
+          )}
+
         </div>
       </div>
     </div>

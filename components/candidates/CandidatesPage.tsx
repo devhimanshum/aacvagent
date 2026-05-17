@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback } from 'react';
-import { Users, Download, RotateCcw, Loader2, CheckSquare, Square, Mail } from 'lucide-react';
+import { Users, Download, RotateCcw, Loader2, CheckSquare, Square, Mail, ArrowLeftCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { CandidateCard } from '@/components/candidates/CandidateCard';
 import { CandidateFilters, DEFAULT_FILTERS, applyFilters } from '@/components/candidates/CandidateFilters';
@@ -55,9 +55,10 @@ function exportCSV(candidates: Candidate[], filename: string) {
 export function CandidatesPage({ decision, title, subtitle, hideMailButton }: CandidatesPageProps) {
   const { candidates, loading, refetch } = useCandidates(decision);
   const [filters,     setFilters]    = useState<FilterState>(DEFAULT_FILTERS);
-  const [undoing,     setUndoing]    = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [mailDialog,  setMailDialog]  = useState(false);
+  const [undoing,      setUndoing]      = useState<string | null>(null);
+  const [bulkUndoing,  setBulkUndoing]  = useState(false);
+  const [selectedIds,  setSelectedIds]  = useState<Set<string>>(new Set());
+  const [mailDialog,   setMailDialog]   = useState(false);
 
   const filtered = useMemo(() => applyFilters(candidates, filters), [candidates, filters]);
 
@@ -73,6 +74,27 @@ export function CandidatesPage({ decision, title, subtitle, hideMailButton }: Ca
       setUndoing(null);
     }
   }, [refetch]);
+
+  const handleBulkUndo = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    setBulkUndoing(true);
+    const ids = Array.from(selectedIds);
+    let succeeded = 0;
+    let failed = 0;
+    await Promise.allSettled(ids.map(async id => {
+      try {
+        await apiClient.put('/api/candidates/review', { candidateId: id });
+        succeeded++;
+      } catch {
+        failed++;
+      }
+    }));
+    setBulkUndoing(false);
+    setSelectedIds(new Set());
+    if (succeeded > 0) toast.success(`${succeeded} candidate${succeeded !== 1 ? 's' : ''} moved back to Review`);
+    if (failed > 0)    toast.error(`${failed} candidate${failed !== 1 ? 's' : ''} failed to move`);
+    refetch();
+  }, [selectedIds, refetch]);
 
   const toggleSelect = (id: string) => setSelectedIds(prev => {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
@@ -130,6 +152,16 @@ export function CandidatesPage({ decision, title, subtitle, hideMailButton }: Ca
                   <span className="text-xs font-semibold text-primary-600 bg-primary-50 rounded-full px-2.5 py-1 border border-primary-100">
                     {selectedIds.size} selected
                   </span>
+                  <button
+                    onClick={handleBulkUndo}
+                    disabled={bulkUndoing}
+                    className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 hover:border-amber-300 transition-colors disabled:opacity-60"
+                  >
+                    {bulkUndoing
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <ArrowLeftCircle className="h-3.5 w-3.5" />}
+                    {decision === 'selected' ? `Back to Selected (${selectedIds.size})` : `Undo (${selectedIds.size})`}
+                  </button>
                   {!hideMailButton && (
                     <button
                       onClick={() => setMailDialog(true)}
